@@ -84,7 +84,7 @@ func newCommentsAddCommand(opts *cliOptions, commentOpts *commentsOptions) *cobr
 	cmd.Flags().IntVar(&input.EndLine, "end-line", 0, "end line number for a multi-line comment")
 	cmd.Flags().StringVar(&input.EndSide, "end-side", "", "end diff side for a multi-line comment: additions or deletions")
 	cmd.Flags().StringVar(&input.Body, "body", "", "comment body, or - to read stdin")
-	cmd.Flags().StringVar(&input.Author, "author", comments.DefaultAuthor, "comment author")
+	cmd.Flags().StringVar(&input.Author, "author", "", "comment author")
 	_ = cmd.MarkFlagRequired("file")
 	_ = cmd.MarkFlagRequired("line")
 	_ = cmd.MarkFlagRequired("body")
@@ -113,7 +113,7 @@ func newCommentsReplyCommand(opts *cliOptions, commentOpts *commentsOptions) *co
 		},
 	}
 	cmd.Flags().StringVar(&input.Body, "body", "", "reply body, or - to read stdin")
-	cmd.Flags().StringVar(&input.Author, "author", comments.DefaultAuthor, "reply author")
+	cmd.Flags().StringVar(&input.Author, "author", "", "reply author")
 	_ = cmd.MarkFlagRequired("body")
 	return cmd
 }

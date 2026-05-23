@@ -50,6 +50,8 @@ type Thread struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Comments  []Comment `json:"comments"`
+	ReplyToID int64     `json:"replyToId,omitempty"`
+	URL       string    `json:"url,omitempty"`
 }
 
 type Comment struct {
@@ -127,7 +129,7 @@ func (s *Store) AddThread(ctx context.Context, input AddThreadInput) (Thread, er
 	if err != nil {
 		return Thread{}, err
 	}
-	author := cleanAuthor(input.Author)
+	author := s.cleanAuthor(ctx, input.Author)
 	now := s.now().UTC()
 
 	s.mu.Lock()
@@ -171,10 +173,11 @@ func (s *Store) AddReply(ctx context.Context, threadID string, input AddReplyInp
 	if body == "" {
 		return Thread{}, errors.New("body is required")
 	}
+	author := s.cleanAuthor(ctx, input.Author)
 	return s.updateThread(ctx, threadID, func(thread *Thread, now time.Time) error {
 		thread.Comments = append(thread.Comments, Comment{
 			ID:        newID("cmt"),
-			Author:    cleanAuthor(input.Author),
+			Author:    author,
 			Body:      body,
 			CreatedAt: now,
 		})
@@ -189,6 +192,30 @@ func (s *Store) Resolve(ctx context.Context, threadID string) (Thread, error) {
 
 func (s *Store) Reopen(ctx context.Context, threadID string) (Thread, error) {
 	return s.setStatus(ctx, threadID, "open")
+}
+
+func (s *Store) Delete(ctx context.Context, threadID string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return errors.New("thread id is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil {
+		return err
+	}
+	branch := s.Branch(ctx)
+	for i := range file.Threads {
+		if file.Threads[i].ID != threadID || file.Threads[i].Branch != branch {
+			continue
+		}
+		file.Threads = append(file.Threads[:i], file.Threads[i+1:]...)
+		return s.save(file)
+	}
+	return ErrNotFound
 }
 
 func (s *Store) setStatus(ctx context.Context, threadID, status string) (Thread, error) {
@@ -331,12 +358,22 @@ func cleanThreadInput(path, side string, line int, endSide string, endLine int, 
 	return path, side, line, endSide, endLine, body, nil
 }
 
-func cleanAuthor(author string) string {
+func (s *Store) cleanAuthor(ctx context.Context, author string) string {
 	author = strings.TrimSpace(author)
 	if author == "" {
-		return DefaultAuthor
+		return s.defaultAuthor(ctx)
 	}
 	return author
+}
+
+func (s *Store) defaultAuthor(ctx context.Context) string {
+	name, err := gitcmd.Run(ctx, s.root, "config", "--get", "user.name")
+	if err == nil {
+		if author := strings.TrimSpace(string(name)); author != "" {
+			return author
+		}
+	}
+	return DefaultAuthor
 }
 
 func newID(prefix string) string {

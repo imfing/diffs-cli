@@ -62,6 +62,13 @@ type gitCommandSpec struct {
 	args  []string
 }
 
+type commentTarget struct {
+	local  bool
+	org    string
+	repo   string
+	number string
+}
+
 func New(cfg Config) (http.Handler, error) {
 	cwd := cfg.CWD
 	if cwd == "" {
@@ -122,11 +129,12 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/local-diff", s.handleLocalDiff)
-	mux.HandleFunc("GET /api/local-comments", s.handleListLocalComments)
-	mux.HandleFunc("POST /api/local-comments", s.handleAddLocalComment)
-	mux.HandleFunc("POST /api/local-comments/{threadID}/replies", s.handleReplyLocalComment)
-	mux.HandleFunc("POST /api/local-comments/{threadID}/resolve", s.handleResolveLocalComment)
-	mux.HandleFunc("POST /api/local-comments/{threadID}/reopen", s.handleReopenLocalComment)
+	mux.HandleFunc("GET /api/comments", s.handleListComments)
+	mux.HandleFunc("POST /api/comments", s.handleAddComment)
+	mux.HandleFunc("DELETE /api/comments/{threadID}", s.handleDeleteComment)
+	mux.HandleFunc("POST /api/comments/{threadID}/replies", s.handleReplyComment)
+	mux.HandleFunc("POST /api/comments/{threadID}/resolve", s.handleResolveComment)
+	mux.HandleFunc("POST /api/comments/{threadID}/reopen", s.handleReopenComment)
 	mux.HandleFunc("GET /api/patch/{org}/{repo}/{number}", s.handlePatch)
 	mux.HandleFunc("/", s.handleStatic)
 	return mux, nil
@@ -169,7 +177,18 @@ func (s *Server) handleLocalDiff(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, patch)
 }
 
-func (s *Server) handleListLocalComments(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
+	if target, ok := s.commentTarget(w, r); ok && !target.local {
+		threads, err := s.listPullRequestComments(r.Context(), target.org, target.repo, target.number)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"threads": threads})
+		return
+	} else if !ok {
+		return
+	}
 	store, ok := s.requireComments(w)
 	if !ok {
 		return
@@ -182,14 +201,27 @@ func (s *Server) handleListLocalComments(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"threads": threads})
 }
 
-func (s *Server) handleAddLocalComment(w http.ResponseWriter, r *http.Request) {
-	store, ok := s.requireComments(w)
+func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.commentTarget(w, r)
 	if !ok {
 		return
 	}
 	var input comments.AddThreadInput
 	if err := readJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !target.local {
+		thread, err := s.addPullRequestComment(r.Context(), target.org, target.repo, target.number, input)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, thread)
+		return
+	}
+	store, ok := s.requireComments(w)
+	if !ok {
 		return
 	}
 	thread, err := store.AddThread(r.Context(), input)
@@ -200,8 +232,33 @@ func (s *Server) handleAddLocalComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, thread)
 }
 
-func (s *Server) handleReplyLocalComment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.commentTarget(w, r)
+	if !ok {
+		return
+	}
+	if !target.local {
+		writeError(w, http.StatusBadRequest, errors.New("deleting GitHub comments is not supported"))
+		return
+	}
 	store, ok := s.requireComments(w)
+	if !ok {
+		return
+	}
+	err := store.Delete(r.Context(), r.PathValue("threadID"))
+	if errors.Is(err, comments.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleReplyComment(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.commentTarget(w, r)
 	if !ok {
 		return
 	}
@@ -210,11 +267,29 @@ func (s *Server) handleReplyLocalComment(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if !target.local {
+		thread, err := s.addPullRequestReply(r.Context(), target.org, target.repo, target.number, r.PathValue("threadID"), input)
+		writeThreadOrError(w, thread, err)
+		return
+	}
+	store, ok := s.requireComments(w)
+	if !ok {
+		return
+	}
 	thread, err := store.AddReply(r.Context(), r.PathValue("threadID"), input)
 	writeThreadOrError(w, thread, err)
 }
 
-func (s *Server) handleResolveLocalComment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleResolveComment(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.commentTarget(w, r)
+	if !ok {
+		return
+	}
+	if !target.local {
+		thread, err := s.setPullRequestThreadResolved(r.Context(), target.org, target.repo, target.number, r.PathValue("threadID"), true)
+		writeThreadOrError(w, thread, err)
+		return
+	}
 	store, ok := s.requireComments(w)
 	if !ok {
 		return
@@ -223,7 +298,16 @@ func (s *Server) handleResolveLocalComment(w http.ResponseWriter, r *http.Reques
 	writeThreadOrError(w, thread, err)
 }
 
-func (s *Server) handleReopenLocalComment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleReopenComment(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.commentTarget(w, r)
+	if !ok {
+		return
+	}
+	if !target.local {
+		thread, err := s.setPullRequestThreadResolved(r.Context(), target.org, target.repo, target.number, r.PathValue("threadID"), false)
+		writeThreadOrError(w, thread, err)
+		return
+	}
 	store, ok := s.requireComments(w)
 	if !ok {
 		return
@@ -285,12 +369,35 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
+func prPathValues(w http.ResponseWriter, r *http.Request) (string, string, string, bool) {
 	org := r.PathValue("org")
 	repo := r.PathValue("repo")
 	number := r.PathValue("number")
 	if !safePathPart(org) || !safePathPart(repo) || !pullNumber.MatchString(number) {
 		writeError(w, http.StatusBadRequest, errors.New("invalid pull request path"))
+		return "", "", "", false
+	}
+	return org, repo, number, true
+}
+
+func (s *Server) commentTarget(w http.ResponseWriter, r *http.Request) (commentTarget, bool) {
+	query := r.URL.Query()
+	org := query.Get("org")
+	repo := query.Get("repo")
+	number := query.Get("number")
+	if org == "" && repo == "" && number == "" {
+		return commentTarget{local: true}, true
+	}
+	if !safePathPart(org) || !safePathPart(repo) || !pullNumber.MatchString(number) {
+		writeError(w, http.StatusBadRequest, errors.New("invalid pull request path"))
+		return commentTarget{}, false
+	}
+	return commentTarget{org: org, repo: repo, number: number}, true
+}
+
+func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
+	org, repo, number, ok := prPathValues(w, r)
+	if !ok {
 		return
 	}
 	patch, err := s.pullRequestPatch(r.Context(), org, repo, number)
@@ -375,12 +482,11 @@ func (s *Server) pullRequestPatch(ctx context.Context, org, repo, number string)
 		"-H",
 		"Accept: application/vnd.github.v3.patch",
 	}
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	out, err := cmd.Output()
+	out, err := s.ghOutput(ctx, "gh api", args...)
 	if err != nil {
-		return "", commandError("gh api", err, cmd, "")
+		return "", err
 	}
-	return string(out), nil
+	return out, nil
 }
 
 func (s *Server) untrackedPatch(ctx context.Context) (string, error) {

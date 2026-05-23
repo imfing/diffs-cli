@@ -37,7 +37,7 @@ func TestStoreAddReplyResolveAndReopen(t *testing.T) {
 	if thread.Line != 42 || thread.EndLine != 45 || thread.Side != "additions" || thread.EndSide != "additions" {
 		t.Fatalf("unexpected thread range: %+v", thread)
 	}
-	if len(thread.Comments) != 1 || thread.Comments[0].Body != "Check this" || thread.Comments[0].Author != DefaultAuthor {
+	if len(thread.Comments) != 1 || thread.Comments[0].Body != "Check this" || thread.Comments[0].Author != "Test" {
 		t.Fatalf("unexpected comments: %+v", thread.Comments)
 	}
 
@@ -63,6 +63,41 @@ func TestStoreAddReplyResolveAndReopen(t *testing.T) {
 	}
 	if thread.Status != "open" {
 		t.Fatalf("status = %q, want open", thread.Status)
+	}
+
+	if err := store.Delete(context.Background(), thread.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	threads, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(threads) != 0 {
+		t.Fatalf("threads = %+v, want deleted thread removed", threads)
+	}
+}
+
+func TestStoreFallsBackToLocalAuthorWithoutGitConfig(t *testing.T) {
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	thread, err := store.AddThread(context.Background(), AddThreadInput{
+		Path: "web/src/App.tsx",
+		Line: 42,
+		Body: "Check this",
+	})
+	if err != nil {
+		t.Fatalf("AddThread() error = %v", err)
+	}
+	if len(thread.Comments) != 1 || thread.Comments[0].Author != DefaultAuthor {
+		t.Fatalf("unexpected comments: %+v", thread.Comments)
 	}
 }
 

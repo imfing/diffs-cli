@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -63,11 +62,14 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", listenAddr)
+	ln, fallback, err := listenWithPortFallback(listenAddr)
 	if err != nil {
 		return err
 	}
 	url := browserURL(ln.Addr(), targetPath)
+	if fallback != nil {
+		printPortFallback(out, fallback.Requested, fallback.Actual, colorEnabled())
+	}
 	printStartup(out, startupInfo{
 		URL:      url,
 		Target:   targetLabel(targetPath, displayCWD),

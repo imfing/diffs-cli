@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -475,13 +476,14 @@ func TestSafePathPartRejectsOptionLikeParts(t *testing.T) {
 func TestLocalCommentsAPI(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
+	git(t, dir, "config", "user.name", "Test")
 	git(t, dir, "checkout", "-b", "feature/comments")
 	handler, err := New(Config{CWD: dir})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	addReq := httptest.NewRequest(http.MethodPost, "/api/local-comments", bytes.NewBufferString(`{
+	addReq := httptest.NewRequest(http.MethodPost, "/api/comments", bytes.NewBufferString(`{
 		"path": "web/src/App.tsx",
 		"line": 42,
 		"side": "additions",
@@ -513,21 +515,33 @@ func TestLocalCommentsAPI(t *testing.T) {
 		t.Fatalf("unexpected comments: %+v", thread.Comments)
 	}
 
-	replyReq := httptest.NewRequest(http.MethodPost, "/api/local-comments/"+thread.ID+"/replies", bytes.NewBufferString(`{"body":"Agreed"}`))
+	replyReq := httptest.NewRequest(http.MethodPost, "/api/comments/"+thread.ID+"/replies", bytes.NewBufferString(`{"body":"Agreed"}`))
 	replyRec := httptest.NewRecorder()
 	handler.ServeHTTP(replyRec, replyReq)
 	if replyRec.Code != http.StatusOK {
 		t.Fatalf("reply status = %d, body = %s", replyRec.Code, replyRec.Body.String())
 	}
+	var replied struct {
+		Comments []struct {
+			Author string `json:"author"`
+			Body   string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.NewDecoder(replyRec.Body).Decode(&replied); err != nil {
+		t.Fatal(err)
+	}
+	if len(replied.Comments) != 2 || replied.Comments[1].Author != "Test" || replied.Comments[1].Body != "Agreed" {
+		t.Fatalf("unexpected reply comments: %+v", replied.Comments)
+	}
 
-	resolveReq := httptest.NewRequest(http.MethodPost, "/api/local-comments/"+thread.ID+"/resolve", nil)
+	resolveReq := httptest.NewRequest(http.MethodPost, "/api/comments/"+thread.ID+"/resolve", nil)
 	resolveRec := httptest.NewRecorder()
 	handler.ServeHTTP(resolveRec, resolveReq)
 	if resolveRec.Code != http.StatusOK {
 		t.Fatalf("resolve status = %d, body = %s", resolveRec.Code, resolveRec.Body.String())
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/local-comments", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/comments", nil)
 	listRec := httptest.NewRecorder()
 	handler.ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK {
@@ -544,6 +558,195 @@ func TestLocalCommentsAPI(t *testing.T) {
 	}
 	if len(list.Threads) != 1 || list.Threads[0].ID != thread.ID || list.Threads[0].Status != "resolved" {
 		t.Fatalf("list = %+v, want resolved thread", list.Threads)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/comments/"+thread.ID, nil)
+	deleteRec := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body = %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	listRec = httptest.NewRecorder()
+	handler.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list after delete status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+	if err := json.NewDecoder(listRec.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Threads) != 0 {
+		t.Fatalf("list after delete = %+v, want no threads", list.Threads)
+	}
+}
+
+func TestGitHubCommentsAPIListsReviewThreads(t *testing.T) {
+	restore := stubGH(t, func(_ context.Context, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && args[1] == "graphql" {
+			return []byte(`{
+				"data": {
+					"repository": {
+						"pullRequest": {
+							"reviewThreads": {
+								"pageInfo": {"hasNextPage": false, "endCursor": ""},
+								"nodes": [{
+									"id": "PRRT_kwDO",
+									"isResolved": false,
+									"path": "web/src/App.tsx",
+									"line": 42,
+									"comments": {
+										"nodes": [{
+											"id": "PRRC_kwDO",
+											"databaseId": 1001,
+											"author": {"login": "octocat"},
+											"body": "Looks odd",
+											"path": "web/src/App.tsx",
+											"line": 42,
+											"side": "RIGHT",
+											"url": "https://github.com/o/r/pull/1#discussion",
+											"createdAt": "2026-05-23T12:00:00Z"
+										}]
+									}
+								}]
+							}
+						}
+					}
+				}
+			}`), nil
+		}
+		t.Fatalf("unexpected gh args: %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	handler, err := New(Config{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/comments?org=org&repo=repo&number=123", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Threads []struct {
+			ID        string `json:"id"`
+			Provider  string `json:"provider"`
+			Path      string `json:"path"`
+			Line      int    `json:"line"`
+			Side      string `json:"side"`
+			Status    string `json:"status"`
+			ReplyToID int64  `json:"replyToId"`
+			Comments  []struct {
+				Author string `json:"author"`
+				Body   string `json:"body"`
+			} `json:"comments"`
+		} `json:"threads"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Threads) != 1 {
+		t.Fatalf("threads = %+v, want one thread", response.Threads)
+	}
+	thread := response.Threads[0]
+	if thread.ID != "PRRT_kwDO" || thread.Provider != "github" || thread.Path != "web/src/App.tsx" || thread.Line != 42 || thread.Side != "additions" || thread.Status != "open" || thread.ReplyToID != 1001 {
+		t.Fatalf("unexpected thread: %+v", thread)
+	}
+	if len(thread.Comments) != 1 || thread.Comments[0].Author != "octocat" || thread.Comments[0].Body != "Looks odd" {
+		t.Fatalf("unexpected comments: %+v", thread.Comments)
+	}
+}
+
+func TestGitHubCommentsAPICreatesReviewComment(t *testing.T) {
+	var createdArgs []string
+	restore := stubGH(t, func(_ context.Context, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "repos/org/repo/pulls/123") && !strings.Contains(joined, "comments"):
+			return []byte(`{"head":{"sha":"abc123"}}`), nil
+		case strings.Contains(joined, "repos/org/repo/pulls/123/comments"):
+			createdArgs = append([]string(nil), args...)
+			return []byte(`{"id":1001,"node_id":"PRRC_kwDO"}`), nil
+		case len(args) >= 2 && args[0] == "api" && args[1] == "graphql":
+			return []byte(githubReviewThreadsFixture(false)), nil
+		default:
+			t.Fatalf("unexpected gh args: %v", args)
+			return nil, nil
+		}
+	})
+	defer restore()
+
+	handler, err := New(Config{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/comments?org=org&repo=repo&number=123", bytes.NewBufferString(`{
+		"path": "web/src/App.tsx",
+		"line": 40,
+		"endLine": 42,
+		"side": "additions",
+		"body": "Looks odd"
+	}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"body=Looks odd",
+		"commit_id=abc123",
+		"path=web/src/App.tsx",
+		"line=42",
+		"start_line=40",
+	} {
+		if !containsArg(createdArgs, want) {
+			t.Fatalf("create args missing %q: %v", want, createdArgs)
+		}
+	}
+}
+
+func TestGitHubCommentsAPIResolvesReviewThread(t *testing.T) {
+	var sawResolve bool
+	restore := stubGH(t, func(_ context.Context, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "resolveReviewThread") {
+			sawResolve = true
+			if !containsArg(args, "threadID=PRRT_kwDO") {
+				t.Fatalf("resolve args missing thread id: %v", args)
+			}
+			return []byte(`{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_kwDO","isResolved":true}}}}`), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && args[1] == "graphql" {
+			return []byte(githubReviewThreadsFixture(true)), nil
+		}
+		t.Fatalf("unexpected gh args: %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	handler, err := New(Config{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/comments/PRRT_kwDO/resolve?org=org&repo=repo&number=123", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !sawResolve {
+		t.Fatal("resolveReviewThread mutation was not called")
+	}
+	var thread struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&thread); err != nil {
+		t.Fatal(err)
+	}
+	if thread.Status != "resolved" {
+		t.Fatalf("status = %q, want resolved", thread.Status)
 	}
 }
 
@@ -592,4 +795,55 @@ func writeFile(t *testing.T, name, content string) {
 	if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func stubGH(t *testing.T, fn func(context.Context, ...string) ([]byte, error)) func() {
+	t.Helper()
+	previous := runGH
+	runGH = fn
+	return func() {
+		runGH = previous
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func githubReviewThreadsFixture(resolved bool) string {
+	return fmt.Sprintf(`{
+		"data": {
+			"repository": {
+				"pullRequest": {
+					"reviewThreads": {
+						"pageInfo": {"hasNextPage": false, "endCursor": ""},
+						"nodes": [{
+							"id": "PRRT_kwDO",
+							"isResolved": %t,
+							"path": "web/src/App.tsx",
+							"line": 42,
+							"comments": {
+								"nodes": [{
+									"id": "PRRC_kwDO",
+									"databaseId": 1001,
+									"author": {"login": "octocat"},
+									"body": "Looks odd",
+									"path": "web/src/App.tsx",
+									"line": 42,
+									"side": "RIGHT",
+									"url": "https://github.com/o/r/pull/1#discussion",
+									"createdAt": "2026-05-23T12:00:00Z"
+								}]
+							}
+						}]
+					}
+				}
+			}
+		}
+	}`, resolved)
 }

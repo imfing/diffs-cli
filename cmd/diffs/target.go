@@ -1,12 +1,19 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 )
+
+type listenFallback struct {
+	Requested string
+	Actual    string
+}
 
 func listenAddrFromOptions(host string, port int) (string, error) {
 	if port < 0 || port > 65535 {
@@ -17,6 +24,42 @@ func listenAddrFromOptions(host string, port int) (string, error) {
 		host = "127.0.0.1"
 	}
 	return normalizeListenAddr(net.JoinHostPort(host, strconv.Itoa(port))), nil
+}
+
+func listenWithPortFallback(addr string) (net.Listener, *listenFallback, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err == nil {
+		return ln, nil, nil
+	}
+	if !isAddrInUse(err) {
+		return nil, nil, err
+	}
+	fallbackAddr, ok := randomPortAddr(addr)
+	if !ok {
+		return nil, nil, err
+	}
+	ln, fallbackErr := net.Listen("tcp", fallbackAddr)
+	if fallbackErr != nil {
+		return nil, nil, fmt.Errorf("%w; fallback to a random port failed: %v", err, fallbackErr)
+	}
+	return ln, &listenFallback{Requested: addr, Actual: ln.Addr().String()}, nil
+}
+
+func randomPortAddr(addr string) (string, bool) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "0" {
+		return "", false
+	}
+	return net.JoinHostPort(host, "0"), true
+}
+
+func isAddrInUse(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "address already in use") ||
+		strings.Contains(message, "only one usage of each socket address")
 }
 
 func normalizeListenAddr(addr string) string {

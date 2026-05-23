@@ -76,6 +76,12 @@ func printStartup(w io.Writer, info startupInfo, color bool) {
 	_, _ = fmt.Fprintln(w)
 }
 
+func printPortFallback(w io.Writer, requested, actual string, color bool) {
+	c := colors(color)
+	_, _ = fmt.Fprintln(w)
+	printLogLineColor(w, c, "warn", fmt.Sprintf("%s in use; using %s", requested, actual), c.yellow)
+}
+
 func printReload(w io.Writer, _ time.Time, files []server.ChangedFile, color bool) {
 	c := colors(color)
 	label, message := reloadLine(files, c, color)

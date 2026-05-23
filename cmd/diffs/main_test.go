@@ -133,6 +133,32 @@ func TestListenAddrFromOptionsRejectsInvalidPort(t *testing.T) {
 	}
 }
 
+func TestListenWithPortFallbackUsesRandomPortWhenBusy(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen occupied port: %v", err)
+	}
+	defer occupied.Close()
+
+	ln, fallback, err := listenWithPortFallback(occupied.Addr().String())
+	if err != nil {
+		t.Fatalf("listenWithPortFallback() error = %v", err)
+	}
+	defer ln.Close()
+	if fallback == nil {
+		t.Fatal("listenWithPortFallback() fallback = nil, want fallback")
+	}
+	if fallback.Requested != occupied.Addr().String() {
+		t.Fatalf("fallback requested = %q, want %q", fallback.Requested, occupied.Addr().String())
+	}
+	if fallback.Actual != ln.Addr().String() {
+		t.Fatalf("fallback actual = %q, want %q", fallback.Actual, ln.Addr().String())
+	}
+	if fallback.Actual == fallback.Requested {
+		t.Fatalf("fallback reused busy address %q", fallback.Actual)
+	}
+}
+
 func TestBrowserURLUsesLoopbackForWildcard(t *testing.T) {
 	got := browserURL(&net.TCPAddr{IP: net.IPv4zero, Port: 3433}, "/local")
 	if got != "http://127.0.0.1:3433/local" {
@@ -184,6 +210,15 @@ func TestPrintStartup(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("printStartup() missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestPrintPortFallback(t *testing.T) {
+	var out bytes.Buffer
+	printPortFallback(&out, "127.0.0.1:3433", "127.0.0.1:52624", false)
+	got := out.String()
+	if !strings.Contains(got, "warn     127.0.0.1:3433 in use; using 127.0.0.1:52624") {
+		t.Fatalf("printPortFallback() = %q", got)
 	}
 }
 
