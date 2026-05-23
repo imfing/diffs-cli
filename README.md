@@ -1,59 +1,86 @@
 # diffs
 
-`diffs` is a small Go CLI that serves an embedded React diff review UI.
+Fast, beautiful diffs on the Go.
 
-It has two main modes:
+<!-- screenshot goes here -->
 
-- Local working tree: `diffs local` opens `http://127.0.0.1:3433/local` and refreshes staged, unstaged, and untracked changes from filesystem events.
-- Pull request review: `diffs pr https://github.com/org/repo/pull/123` opens the same UI backed by `gh api`.
+## Motivation
 
-## Build
+`diffs` is a local-first CLI in a single binary. Inspired by [DiffsHub](https://diffshub.com) from [pierre.computer](https://pierre.computer/), it brings a calmer review experience to your working tree and GitHub pull request.
 
-```sh
-pnpm install
-pnpm build
-```
+## Install
 
-The build compiles the web UI into `internal/webassets/dist`, embeds that generated bundle into the Go binary, and writes the final CLI binary.
+Download a pre-built binary from the [releases page](https://github.com/imfing/diffs-cli/releases), or build from source (see below).
 
 ## Usage
 
+Run from any git repository:
+
 ```sh
 diffs
-diffs local
-diffs local --host localhost --port 4321 --dir /path/to/repo
-diffs pr /org/repo/pull/123
+```
+
+This opens `http://127.0.0.1:3433/local` and reloads when files change.
+
+Review a GitHub pull request (requires the [GitHub CLI](https://cli.github.com)):
+
+```sh
 diffs pr https://github.com/org/repo/pull/123
+```
+
+Common flags:
+
+```sh
+diffs local --port 4321 --dir /path/to/repo
 diffs pr --github-host github.example.com /org/repo/pull/123
 ```
 
-The GitHub PR path relies on the GitHub CLI being authenticated for the target host.
+### Large pull requests
+
+The `pr` command fetches the diff via `gh api`, which GitHub caps at 300 changed files. For larger PRs, clone the repo and review with `diffs local` after checking out the PR branch:
+
+```sh
+gh pr checkout 123
+diffs local
+```
 
 ## Configuration
 
-On startup, `diffs` attempts to read `~/.config/diffs/config.toml`. Missing config is ignored.
+Optional. `diffs` reads `~/.config/diffs/config.toml` on startup:
 
 ```toml
 [ui]
 color_scheme = "system"    # system, light, dark
-diff_theme = "github"      # pierre, github, dark-plus, light-plus, one-dark-pro, one-light, monokai, night-owl, tokyo-night
+diff_theme = "github"      # github, dark-plus, light-plus, one-dark-pro, ...
 diff_style = "split"       # split, unified
 word_wrap = false
 line_numbers = true
 line_backgrounds = true
 ```
 
-## Local comments
+The file sets initial defaults only. Once you change a setting in the UI it is saved to the browser's `localStorage` and takes precedence over `config.toml` on subsequent loads.
 
-Local review comments are stored in `.diffs/comments.json` at the git repository root. The `.diffs/` directory is ignored by default, so comments stay local unless you intentionally share that file.
+## Comments
+
+Review comments are stored in `.diffs/comments.json` at the repo root. The folder is git-ignored by default.
 
 ```sh
-diffs comments list --dir .
-diffs comments list --json --dir .
-diffs comments add --dir . --file web/src/App.tsx --line 42 --body "Check this"
-diffs comments reply THREAD_ID --dir . --body "Updated note"
-diffs comments resolve THREAD_ID --dir .
-diffs comments reopen THREAD_ID --dir .
+diffs comments add --file web/src/App.tsx --line 42 --body "Check this"
+diffs comments list
+diffs comments reply <thread-id> --body "Updated"
+diffs comments resolve <thread-id>
+diffs comments reopen <thread-id>
 ```
 
-Use `--dir /path/to/repo` with any `comments` command to target another repository.
+Pass `--dir /path/to/repo` to target a different repository.
+
+## Build from source
+
+Requires Go 1.26+ and pnpm.
+
+```sh
+pnpm install
+pnpm build
+```
+
+The binary is written to `bin/diffs`.
