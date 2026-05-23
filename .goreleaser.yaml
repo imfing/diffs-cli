@@ -1,0 +1,57 @@
+version: 2
+
+project_name: diffs
+
+before:
+  hooks:
+    - pnpm install --frozen-lockfile
+    - pnpm --dir web build
+    - rm -rf internal/webassets/dist
+    - mkdir -p internal/webassets/dist
+    - cp -R web/dist/. internal/webassets/dist
+    - touch internal/webassets/dist/.gitkeep
+
+builds:
+  - id: diffs
+    main: ./cmd/diffs
+    binary: diffs
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: diffs
+    ids:
+      - diffs
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: imfing
+    name: diffs-cli
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
