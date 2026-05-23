@@ -4,31 +4,10 @@ import {
   parsePatchFiles,
   type CodeViewItem,
   type DiffLineAnnotation,
-  type DiffsThemeNames,
   type FileDiffMetadata,
   type SelectedLineRange,
-  type ThemesType,
-  type ThemeTypes,
 } from '@pierre/diffs';
 import { CodeView, type CodeViewHandle, useWorkerPool } from '@pierre/diffs/react';
-import { CommentInput } from './CommentInput';
-import { Button, buttonVariants } from '@/components/ui/button';
-import {
-  Popover,
-  PopoverContent,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import {
   applyColorScheme,
   initialColorScheme,
@@ -36,335 +15,40 @@ import {
   persistColorScheme,
   type AppColorScheme,
 } from '@/lib/colorScheme';
-import type { GitStatusEntry } from '@pierre/trees';
-import { FileTree, useFileTree, useFileTreeSearch } from '@pierre/trees/react';
 import {
   IconChevronRight as ChevronRight,
-  IconExternalLink as ExternalLink,
-  IconFolder as FolderTree,
-  IconLayoutColumns as SplitView,
-  IconLayoutList as UnifiedView,
-  IconLayoutSidebar as PanelLeft,
-  IconMessagePlus as MessageSquarePlus,
-  IconSearch as Search,
-  IconSettings as Settings,
-  IconX as X,
 } from '@tabler/icons-react';
-import { FoldVertical, UnfoldVertical } from 'lucide-react';
-
-type DiffStyle = 'split' | 'unified';
-type DiffThemeId =
-  | 'pierre'
-  | 'github'
-  | 'dark-plus'
-  | 'light-plus'
-  | 'one-dark-pro'
-  | 'one-light'
-  | 'monokai'
-  | 'night-owl'
-  | 'tokyo-night';
-
-type DiffThemeOption = {
-  id: DiffThemeId;
-  label: string;
-  theme: DiffsThemeNames | ThemesType;
-  themeType?: ThemeTypes;
-};
-
-type ColorSchemeOption = {
-  id: AppColorScheme;
-  label: string;
-};
-
-type PatchLoadState = {
-  error: string | null;
-  patch: string | null;
-  requestKey: string;
-  status: 'loading' | 'loaded' | 'error';
-};
-
-type AppConfig = {
-  colorScheme?: string;
-  cwd: string;
-  gitBranch: string;
-  githubHost: string;
-};
-
-type PendingComment = {
-  id: string;
-  body: string;
-  path: string;
-  line: number;
-  side: 'additions' | 'deletions';
-  itemId: string;
-};
-
-type CommentTarget = {
-  itemId: string;
-  path: string;
-  line: number;
-  side: 'additions' | 'deletions';
-};
-
-type AnnotationMeta =
-  | { type: 'input' }
-  | { type: 'comment'; comment: PendingComment };
-
-function localDirTitle(cwd: string): string {
-  const normalized = cwd.trim().replace(/[\\/]+$/, '');
-  if (normalized === '') return 'local';
-  const parts = normalized.split(/[\\/]+/);
-  return parts[parts.length - 1] || normalized;
-}
-
-function localRepoTitle(cwd: string, branch: string): string {
-  const dir = localDirTitle(cwd);
-  const cleanedBranch = branch.trim();
-  return cleanedBranch === '' ? dir : `${dir} (${cleanedBranch})`;
-}
-
-function gitStatusForFile(file: FileDiffMetadata): GitStatusEntry['status'] {
-  switch (file.type) {
-    case 'new':
-      return 'added';
-    case 'deleted':
-      return 'deleted';
-    case 'rename-pure':
-    case 'rename-changed':
-      return 'renamed';
-    case 'change':
-    default:
-      return 'modified';
-  }
-}
-
-const diffThemeOptions: readonly DiffThemeOption[] = [
-  {
-    id: 'pierre',
-    label: 'Pierre',
-    theme: { dark: 'pierre-dark', light: 'pierre-light' },
-    themeType: 'system',
-  },
-  {
-    id: 'github',
-    label: 'GitHub',
-    theme: { dark: 'github-dark', light: 'github-light' },
-    themeType: 'system',
-  },
-  { id: 'dark-plus', label: 'Dark Plus', theme: 'dark-plus' },
-  { id: 'light-plus', label: 'Light Plus', theme: 'light-plus' },
-  { id: 'one-dark-pro', label: 'One Dark Pro', theme: 'one-dark-pro' },
-  { id: 'one-light', label: 'One Light', theme: 'one-light' },
-  { id: 'monokai', label: 'Monokai', theme: 'monokai' },
-  { id: 'night-owl', label: 'Night Owl', theme: 'night-owl' },
-  { id: 'tokyo-night', label: 'Tokyo Night', theme: 'tokyo-night' },
-];
-
-const colorSchemeOptions: readonly ColorSchemeOption[] = [
-  { id: 'system', label: 'System' },
-  { id: 'light', label: 'Light' },
-  { id: 'dark', label: 'Dark' },
-];
-
-function SidebarTree({
-  paths,
-  files,
-  onFileActivate,
-}: {
-  paths: readonly string[];
-  files: readonly FileDiffMetadata[];
-  onFileActivate: (path: string) => void;
-}) {
-  const filePathSet = useMemo(() => new Set(paths), [paths]);
-  const filePathSetRef = useRef(filePathSet);
-  const onFileActivateRef = useRef(onFileActivate);
-
-  const gitStatus = useMemo<GitStatusEntry[]>(
-    () =>
-      files.map((file) => ({
-        path: file.name,
-        status: gitStatusForFile(file),
-      })),
-    [files],
-  );
-  const pathsKey = useMemo(() => paths.join('\0'), [paths]);
-  const gitStatusKey = useMemo(
-    () => gitStatus.map((entry) => `${entry.path}\0${entry.status}`).join('\0'),
-    [gitStatus],
-  );
-  const pathsKeyRef = useRef(pathsKey);
-  const gitStatusKeyRef = useRef(gitStatusKey);
-
-  const { model } = useFileTree({
-    paths,
-    gitStatus,
-    search: true,
-    fileTreeSearchMode: 'hide-non-matches',
-    initialExpansion: 'open',
-    icons: 'standard',
-    density: 'compact',
-    flattenEmptyDirectories: true,
-    onSelectionChange: (selected) => {
-      const selectedFilePath = selected.find((path) => filePathSetRef.current.has(path));
-      if (selectedFilePath != null) {
-        onFileActivateRef.current(selectedFilePath);
-      }
-    },
-  });
-
-  useEffect(() => {
-    filePathSetRef.current = filePathSet;
-    onFileActivateRef.current = onFileActivate;
-  }, [filePathSet, onFileActivate]);
-
-  useEffect(() => {
-    if (pathsKeyRef.current === pathsKey) return;
-    pathsKeyRef.current = pathsKey;
-    model.resetPaths(paths);
-  }, [model, paths, pathsKey]);
-
-  useEffect(() => {
-    if (gitStatusKeyRef.current === gitStatusKey) return;
-    gitStatusKeyRef.current = gitStatusKey;
-    model.setGitStatus(gitStatus);
-  }, [gitStatus, gitStatusKey, model]);
-
-  const search = useFileTreeSearch(model);
-  const handleTreeClick = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => {
-      for (const target of event.nativeEvent.composedPath()) {
-        if (!(target instanceof HTMLElement)) continue;
-        if (target.dataset.itemType !== 'file') continue;
-        const path = target.dataset.itemPath;
-        if (path != null && filePathSet.has(path)) {
-          onFileActivate(path);
-        }
-        return;
-      }
-    },
-    [filePathSet, onFileActivate],
-  );
-
-  const stats = useMemo(() => {
-    let additions = 0;
-    let deletions = 0;
-    let lines = 0;
-    for (const f of files) {
-      lines += f.unifiedLineCount;
-      for (const h of f.hunks) {
-        additions += h.additionLines;
-        deletions += h.deletionLines;
-      }
-    }
-    return { files: paths.length, additions, deletions, lines };
-  }, [files, paths.length]);
-
-  return (
-    <div className="flex h-full flex-col pt-3">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-3 pb-1">
-        <div className="mr-auto flex items-center gap-2">
-          <Button type="button" variant="ghost" size="icon-xs" className="text-muted-foreground" title="Files">
-            <FolderTree size={14} />
-          </Button>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="text-muted-foreground"
-          title="Search files"
-          aria-pressed={search.isOpen}
-          onClick={() => (search.isOpen ? search.close() : search.open(''))}
-        >
-          <Search size={14} />
-        </Button>
-      </div>
-
-      {/* Tree */}
-      <div className="mt-2 min-h-0 flex-1">
-        <FileTree model={model} onClick={handleTreeClick} style={{ height: '100%' }} />
-      </div>
-
-      {/* Stats */}
-      <div className="shrink-0 border-t border-neutral-200 px-3 py-2 dark:border-neutral-700">
-        <div className="flex items-center justify-between py-0.5 text-xs">
-          <span className="text-neutral-500">Files</span>
-          <span className="font-mono tabular-nums font-semibold">{stats.files.toLocaleString()}</span>
-        </div>
-        <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-          <span className="text-neutral-500">Additions</span>
-          <span className="font-mono tabular-nums font-semibold text-green-600 dark:text-green-400">
-            +{stats.additions.toLocaleString()}
-          </span>
-        </div>
-        <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-          <span className="text-neutral-500">Deletions</span>
-          <span className="font-mono tabular-nums font-semibold text-red-600 dark:text-red-400">
-            -{stats.deletions.toLocaleString()}
-          </span>
-        </div>
-        <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-          <span className="text-neutral-500">Lines</span>
-          <span className="font-mono tabular-nums font-semibold">{stats.lines.toLocaleString()}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const headerIconButtonClass = 'size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]';
-const headerIconLinkClass = buttonVariants({
-  variant: 'ghost',
-  size: 'icon-sm',
-  className: `${headerIconButtonClass} no-underline`,
-});
-const settingsRowClass = 'flex items-center justify-between gap-4 py-1.5 text-sm';
-
-function PullRequestUrlForm({
-  onNavigate,
-  prUrl,
-}: {
-  onNavigate: (path: string) => void;
-  prUrl: string;
-}) {
-  const [urlInput, setUrlInput] = useState(prUrl);
-
-  function handleUrlSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const match = urlInput.match(/(?:https?:\/\/[^/]+\/)?([^/]+)\/([^/]+)\/pull\/(\d+)/);
-    if (match) {
-      const [, o, r, n] = match;
-      onNavigate(`/${o}/${r}/pull/${n}`);
-    }
-  }
-
-  return (
-    <form className="group mr-auto flex min-w-0 flex-1 items-center gap-0.5" onSubmit={handleUrlSubmit}>
-      <input
-        value={urlInput}
-        onChange={(e) => setUrlInput(e.target.value)}
-        placeholder="https://github.com/org/repo/pull/123"
-        className="block h-9 min-w-[24ch] max-w-[440px] flex-1 rounded-md bg-transparent px-2 text-[13px] text-neutral-500 outline-none focus:text-neutral-900 dark:focus:text-neutral-100"
-      />
-      {urlInput && (
-        <button
-          type="button"
-          className={buttonVariants({
-            variant: 'ghost',
-            size: 'icon-sm',
-            className: 'opacity-0 transition-opacity group-hover:opacity-50 group-focus-within:opacity-50 hover:!opacity-100',
-          })}
-          onClick={() => setUrlInput('')}
-          aria-label="Clear"
-        >
-          <X size={14} />
-        </button>
-      )}
-      <button type="submit" hidden />
-    </form>
-  );
-}
+import { DiffAnnotation } from './diff-view/DiffAnnotation';
+import { DiffToolbar } from './diff-view/DiffToolbar';
+import { SidebarTree } from './diff-view/SidebarTree';
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from './ui/drawer';
+import type {
+  AnnotationMeta,
+  AppConfig,
+  CodeViewLineSelection,
+  CommentTarget,
+  DiffStyle,
+  DiffThemeId,
+  PatchLoadState,
+  ReviewThread,
+} from './diff-view/types';
+import {
+  diffThemeOptions,
+  isDiffStyle,
+  isDiffThemeId,
+  localRepoTitle,
+  selectedRangeEndLine,
+  selectedRangeEndSide,
+  selectedRangeSide,
+  threadEndLine,
+  threadEndSide,
+} from './diff-view/helpers';
 
 export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const { org, repo, number } = useParams<{
@@ -376,7 +60,10 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
   const [diffStyle, setDiffStyle] = useState<DiffStyle>('split');
   const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(
-    () => (localStorage.getItem('diff-theme') as DiffThemeId) || 'pierre',
+    () => {
+      const stored = localStorage.getItem('diff-theme');
+      return isDiffThemeId(stored) ? stored : 'pierre';
+    },
   );
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [allCollapsed, setAllCollapsed] = useState(false);
@@ -385,9 +72,11 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const [disableLineNumbers, setDisableLineNumbers] = useState(false);
   const [overflow, setOverflow] = useState<'scroll' | 'wrap'>('scroll');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
-  const [pendingComments, setPendingComments] = useState<PendingComment[]>([]);
+  const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
+  const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
   const [config, setConfig] = useState<AppConfig>({ cwd: '', gitBranch: '', githubHost: 'github.com' });
 
   const isLocal = source === 'local';
@@ -416,6 +105,21 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
         if (isAppColorScheme(nextConfig.colorScheme)) {
           setAppColorScheme(nextConfig.colorScheme);
         }
+        if (isDiffThemeId(nextConfig.diffTheme)) {
+          setDiffThemeId(nextConfig.diffTheme);
+        }
+        if (isDiffStyle(nextConfig.diffStyle)) {
+          setDiffStyle(nextConfig.diffStyle);
+        }
+        if (typeof nextConfig.wordWrap === 'boolean') {
+          setOverflow(nextConfig.wordWrap ? 'wrap' : 'scroll');
+        }
+        if (typeof nextConfig.lineNumbers === 'boolean') {
+          setDisableLineNumbers(!nextConfig.lineNumbers);
+        }
+        if (typeof nextConfig.lineBackgrounds === 'boolean') {
+          setDisableBackground(!nextConfig.lineBackgrounds);
+        }
       })
       .catch(() => {
         setConfig((current) => current);
@@ -429,6 +133,21 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   useEffect(() => {
     applyColorScheme(appColorScheme);
   }, [appColorScheme]);
+
+  const loadComments = useCallback(() => {
+    if (!isLocal) return;
+    fetch('/api/local-comments')
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: { threads?: ReviewThread[] }) => {
+        setCommentThreads(data.threads ?? []);
+      })
+      .catch(() => {
+        setCommentThreads([]);
+      });
+  }, [isLocal]);
 
   useEffect(() => {
     let ignore = false;
@@ -454,6 +173,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
               requestKey,
               status: 'loaded',
             });
+            if (isLocal) loadComments();
           }
         })
         .catch((err: unknown) => {
@@ -481,7 +201,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       eventSource?.close();
       if (fallbackInterval != null) window.clearInterval(fallbackInterval);
     };
-  }, [isLocal, org, repo, number, requestKey]);
+  }, [isLocal, org, repo, number, requestKey, loadComments]);
 
   const activePatchState = patchState.requestKey === requestKey ? patchState : null;
   const loading = activePatchState == null || activePatchState.status === 'loading';
@@ -521,6 +241,42 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     },
     [filePathToItemId],
   );
+  const scrollToThread = useCallback(
+    (thread: ReviewThread) => {
+      const itemId = filePathToItemId.get(thread.path);
+      if (itemId == null) return;
+      const range: SelectedLineRange = {
+        start: thread.line,
+        side: thread.side,
+        end: threadEndLine(thread),
+        endSide: threadEndSide(thread),
+      };
+      setSelectedLines({ id: itemId, range });
+      viewerRef.current?.scrollTo({ type: 'range', id: itemId, range, align: 'center', behavior: 'smooth-auto' });
+    },
+    [filePathToItemId],
+  );
+  const openSidebar = useCallback(() => {
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      setMobileSidebarOpen(true);
+      return;
+    }
+    setSidebarOpen((open) => !open);
+  }, []);
+  const activateMobileFile = useCallback(
+    (path: string) => {
+      scrollToFile(path);
+      setMobileSidebarOpen(false);
+    },
+    [scrollToFile],
+  );
+  const activateMobileComment = useCallback(
+    (thread: ReviewThread) => {
+      scrollToThread(thread);
+      setMobileSidebarOpen(false);
+    },
+    [scrollToThread],
+  );
   const toggleFileCollapsed = useCallback((itemId: string) => {
     const viewer = viewerRef.current;
     const item = viewer?.getItem(itemId);
@@ -531,34 +287,128 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       collapsed: !item.collapsed,
     });
   }, []);
+  const toggleAllFilesCollapsed = useCallback(() => {
+    const next = !allCollapsed;
+    setAllCollapsed(next);
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    for (const item of initialItems) {
+      const current = viewer.getItem(item.id);
+      if (current && current.collapsed !== next) {
+        viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: next });
+      }
+    }
+  }, [allCollapsed, initialItems]);
+  const handleColorSchemeChange = useCallback((value: AppColorScheme) => {
+    setAppColorScheme(value);
+    persistColorScheme(value);
+  }, []);
+  const handleDiffThemeChange = useCallback((id: DiffThemeId) => {
+    setDiffThemeId(id);
+    localStorage.setItem('diff-theme', id);
+  }, []);
+
+  const clearCommentTarget = useCallback(() => {
+    setCommentTarget(null);
+    setSelectedLines(null);
+  }, []);
+
+  const openCommentTarget = useCallback(
+    (range: SelectedLineRange | null, context: { item: CodeViewItem<AnnotationMeta> }) => {
+      if (range == null || context.item.type !== 'diff') return;
+      const target = {
+        itemId: context.item.id,
+        path: context.item.fileDiff!.name,
+        line: range.start,
+        side: selectedRangeSide(range),
+        endLine: selectedRangeEndLine(range),
+        endSide: selectedRangeEndSide(range),
+        range,
+      };
+      setSelectedLines({ id: context.item.id, range });
+      setCommentTarget(target);
+    },
+    [],
+  );
 
   const addComment = useCallback(
     (body: string) => {
       if (!commentTarget) return;
-      const comment: PendingComment = {
+      if (isLocal) {
+        fetch('/api/local-comments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: commentTarget.path,
+            line: commentTarget.line,
+            side: commentTarget.side,
+            endLine: commentTarget.endLine,
+            endSide: commentTarget.endSide,
+            body,
+          }),
+        })
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((thread: ReviewThread) => {
+            setCommentThreads((prev) => [...prev.filter((t) => t.id !== thread.id), thread]);
+            clearCommentTarget();
+          })
+          .catch(() => {
+            clearCommentTarget();
+          });
+        return;
+      }
+      const now = new Date().toISOString();
+      const thread: ReviewThread = {
         id: crypto.randomUUID(),
-        body,
+        provider: 'local',
+        branch: '',
         path: commentTarget.path,
         line: commentTarget.line,
         side: commentTarget.side,
-        itemId: commentTarget.itemId,
+        endLine: commentTarget.endLine,
+        endSide: commentTarget.endSide,
+        status: 'open',
+        comments: [{ id: crypto.randomUUID(), author: 'local', body, createdAt: now }],
       };
-      setPendingComments((prev) => [...prev, comment]);
-      setCommentTarget(null);
+      setCommentThreads((prev) => [...prev, thread]);
+      clearCommentTarget();
     },
-    [commentTarget],
+    [clearCommentTarget, commentTarget, isLocal],
   );
 
-  const deleteComment = useCallback((commentId: string) => {
-    setPendingComments((prev) => prev.filter((c) => c.id !== commentId));
-  }, []);
+  const resolveThread = useCallback(
+    (threadId: string) => {
+      if (isLocal) {
+        fetch(`/api/local-comments/${threadId}/resolve`, { method: 'POST' })
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((thread: ReviewThread) => {
+            setCommentThreads((prev) => prev.map((t) => (t.id === thread.id ? thread : t)));
+          })
+          .catch(() => {
+            setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
+          });
+        return;
+      }
+      setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
+    },
+    [isLocal],
+  );
 
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
     const affectedItemIds = new Set<string>();
-    for (const c of pendingComments) affectedItemIds.add(c.itemId);
+    for (const thread of commentThreads) {
+      const itemId = filePathToItemId.get(thread.path);
+      if (itemId != null) affectedItemIds.add(itemId);
+    }
     if (commentTarget) affectedItemIds.add(commentTarget.itemId);
     for (const item of initialItems) affectedItemIds.add(item.id);
 
@@ -568,9 +418,10 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
       const annotations: DiffLineAnnotation<AnnotationMeta>[] = [];
 
-      for (const c of pendingComments) {
-        if (c.itemId !== itemId) continue;
-        annotations.push({ side: c.side, lineNumber: c.line, metadata: { type: 'comment', comment: c } });
+      for (const thread of commentThreads) {
+        if (thread.status !== 'open') continue;
+        if (filePathToItemId.get(thread.path) !== itemId) continue;
+        annotations.push({ side: thread.side, lineNumber: thread.line, metadata: { type: 'comment', thread } });
       }
 
       if (commentTarget && commentTarget.itemId === itemId) {
@@ -588,7 +439,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
         annotations: annotations.length > 0 ? annotations : undefined,
       });
     }
-  }, [pendingComments, commentTarget, initialItems]);
+  }, [commentThreads, commentTarget, initialItems, filePathToItemId]);
 
   if (loading) {
     return (
@@ -618,197 +469,71 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
   return (
     <div className="flex h-dvh flex-col">
-      {/* ── Topbar ── */}
-      <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 dark:border-neutral-700 dark:bg-neutral-900">
-        {/* URL input */}
-        {isLocal ? (
-          <div className="mr-auto min-w-0 truncate px-2 text-[13px] text-neutral-500 dark:text-neutral-400">
-            Watching {config.cwd || 'current directory'}
-            {config.gitBranch.trim() !== '' ? ` on ${config.gitBranch.trim()}` : ''}
-          </div>
-        ) : (
-          <PullRequestUrlForm key={prUrl} prUrl={prUrl} onNavigate={navigate} />
-        )}
-
-        {/* Actions */}
-        <div className="flex shrink-0 items-center gap-0.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={headerIconButtonClass}
-            onClick={() => setSidebarOpen((o) => !o)}
-            aria-pressed={sidebarOpen}
-            aria-label="Show file tree"
-            title="Show file tree"
-          >
-            <PanelLeft size={14} />
-          </Button>
-
-          {!isLocal && (
-            <a href={prUrl} target="_blank" rel="noopener noreferrer" className={headerIconLinkClass} aria-label="Open source in new tab" title="Open source in new tab">
-              <ExternalLink size={14} />
-            </a>
-          )}
-
-          <span className="mx-1 h-3 w-px shrink-0 bg-neutral-300 dark:bg-neutral-600" />
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={headerIconButtonClass}
-            onClick={() => setDiffStyle((s) => (s === 'split' ? 'unified' : 'split'))}
-            aria-label={diffStyle === 'split' ? 'Switch to unified view' : 'Switch to split view'}
-            title={diffStyle === 'split' ? 'Switch to unified view' : 'Switch to split view'}
-          >
-            {diffStyle === 'split' ? <UnifiedView /> : <SplitView />}
-          </Button>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={headerIconButtonClass}
-            onClick={() => {
-              const next = !allCollapsed;
-              setAllCollapsed(next);
-              const viewer = viewerRef.current;
-              if (!viewer) return;
-              for (const item of initialItems) {
-                const current = viewer.getItem(item.id);
-                if (current && current.collapsed !== next) {
-                  viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: next });
-                }
-              }
-            }}
-            aria-pressed={allCollapsed}
-            aria-label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
-            title={allCollapsed ? 'Expand all files' : 'Collapse all files'}
-          >
-            {allCollapsed ? <UnfoldVertical /> : <FoldVertical />}
-          </Button>
-
-          {pendingComments.length > 0 && (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                console.log('Submit review:', pendingComments);
-              }}
-            >
-              Submit Review ({pendingComments.length})
-            </Button>
-          )}
-
-          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={headerIconButtonClass}
-                  aria-label="Settings"
-                  title="Settings"
-                >
-                  <Settings size={14} />
-                </Button>
-              }
-            />
-            <PopoverContent align="end" sideOffset={8} className="w-[250px] gap-3 p-3">
-              <PopoverHeader>
-                <PopoverTitle>Settings</PopoverTitle>
-              </PopoverHeader>
-              <div className="flex flex-col gap-1">
-                <label className={settingsRowClass}>
-                  <span>Color scheme</span>
-                  <Select
-                    value={appColorScheme}
-                    onValueChange={(value) => {
-                      if (!isAppColorScheme(value)) return;
-                      setAppColorScheme(value);
-                      persistColorScheme(value);
-                    }}
-                  >
-                    <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
-                      <SelectValue>
-                        {(value) =>
-                          colorSchemeOptions.find((option) => option.id === value)?.label ?? 'System'
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectGroup>
-                        {colorSchemeOptions.map((option) => (
-                          <SelectItem key={option.id} value={option.id} className="text-xs">
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </label>
-                <label className={settingsRowClass}>
-                  <span>Diff theme</span>
-                  <Select
-                    value={diffThemeId}
-                    onValueChange={(value) => {
-                      const id = value as DiffThemeId;
-                      setDiffThemeId(id);
-                      localStorage.setItem('diff-theme', id);
-                    }}
-                  >
-                    <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
-                      <SelectValue>
-                        {(value) =>
-                          diffThemeOptions.find((option) => option.id === value)?.label ?? selectedDiffTheme.label
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="end" className="max-h-[260px]">
-                      <SelectGroup>
-                        {diffThemeOptions.map((option) => (
-                          <SelectItem key={option.id} value={option.id} className="text-xs">
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </label>
-                <label className={settingsRowClass}>
-                  <span>Line backgrounds</span>
-                  <Switch size="sm" checked={!disableBackground} onCheckedChange={(checked) => setDisableBackground(!checked)} />
-                </label>
-                <label className={settingsRowClass}>
-                  <span>Line numbers</span>
-                  <Switch size="sm" checked={!disableLineNumbers} onCheckedChange={(checked) => setDisableLineNumbers(!checked)} />
-                </label>
-                <label className={settingsRowClass}>
-                  <span>Word wrap</span>
-                  <Switch size="sm" checked={overflow === 'wrap'} onCheckedChange={(checked) => setOverflow(checked ? 'wrap' : 'scroll')} />
-                </label>
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </header>
+      <DiffToolbar
+        allCollapsed={allCollapsed}
+        appColorScheme={appColorScheme}
+        commentCount={commentThreads.length}
+        config={config}
+        diffStyle={diffStyle}
+        diffThemeId={diffThemeId}
+        disableBackground={disableBackground}
+        disableLineNumbers={disableLineNumbers}
+        isLocal={isLocal}
+        onColorSchemeChange={handleColorSchemeChange}
+        onDiffStyleToggle={() => setDiffStyle((s) => (s === 'split' ? 'unified' : 'split'))}
+        onDiffThemeChange={handleDiffThemeChange}
+        onNavigate={navigate}
+        onSettingsOpenChange={setSettingsOpen}
+        onSidebarToggle={openSidebar}
+        onSubmitReview={() => {
+          console.log('Submit review:', commentThreads);
+        }}
+        onToggleAllCollapsed={toggleAllFilesCollapsed}
+        overflow={overflow}
+        prUrl={prUrl}
+        selectedDiffThemeLabel={selectedDiffTheme.label}
+        setDisableBackground={setDisableBackground}
+        setDisableLineNumbers={setDisableLineNumbers}
+        setOverflow={setOverflow}
+        settingsOpen={settingsOpen}
+        sidebarOpen={sidebarOpen || mobileSidebarOpen}
+      />
 
       {/* ── Body ── */}
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
-          <aside className="w-[260px] shrink-0 overflow-hidden border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900">
+          <aside className="hidden w-[320px] shrink-0 overflow-hidden border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 md:block">
             <SidebarTree
               paths={filePaths}
               files={files}
+              comments={commentThreads}
               onFileActivate={scrollToFile}
+              onCommentActivate={scrollToThread}
             />
           </aside>
         )}
+        <Drawer open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+          <DrawerContent className="border-neutral-200 bg-neutral-50 p-0 dark:border-neutral-700 dark:bg-neutral-900 md:hidden">
+            <DrawerHeader className="sr-only">
+              <DrawerTitle>Sidebar</DrawerTitle>
+              <DrawerDescription>Browse files, comments, and diff stats.</DrawerDescription>
+            </DrawerHeader>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <SidebarTree
+                paths={filePaths}
+                files={files}
+                comments={commentThreads}
+                onFileActivate={activateMobileFile}
+                onCommentActivate={activateMobileComment}
+              />
+            </div>
+          </DrawerContent>
+        </Drawer>
         <CodeView<AnnotationMeta>
           ref={viewerRef}
           initialItems={initialItems}
+          selectedLines={selectedLines}
+          onSelectedLinesChange={setSelectedLines}
           style={{ flex: 1, overflow: 'auto' }}
           options={{
             theme: selectedDiffTheme.theme,
@@ -820,45 +545,23 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
             disableLineNumbers,
             overflow,
             enableGutterUtility: true,
+            enableLineSelection: true,
             onGutterUtilityClick(range: SelectedLineRange, context: { item: CodeViewItem<AnnotationMeta> }) {
-              setCommentTarget({
-                itemId: context.item.id,
-                path: context.item.type === 'diff' ? context.item.fileDiff!.name : '',
-                line: range.start,
-                side: range.side ?? 'additions',
-              });
+              openCommentTarget(range, context);
+            },
+            onLineSelectionEnd(range: SelectedLineRange | null, context: { item: CodeViewItem<AnnotationMeta> }) {
+              openCommentTarget(range, context);
             },
             layout: { paddingTop: 12, paddingBottom: 12, gap: 12 },
           }}
-          renderAnnotation={(annotation) => {
-            const meta = annotation.metadata;
-            if (!meta) return null;
-            if (meta.type === 'input') {
-              return (
-                <CommentInput
-                  onSubmit={addComment}
-                  onCancel={() => setCommentTarget(null)}
-                />
-              );
-            }
-            if (meta.type === 'comment') {
-              return (
-                <div className="group/comment relative m-2 ml-3 flex max-w-[600px] items-start gap-2.5 rounded-xl border border-amber-200/60 bg-amber-50 bg-clip-padding p-3 font-sans shadow-[0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025)] dark:border-amber-500/20 dark:bg-amber-900/20 dark:shadow-[0_2px_4px_rgb(0_0_0_/_0.25),0_4px_8px_rgb(0_0_0_/_0.25)]">
-                  <MessageSquarePlus size={14} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <span className="flex-1 text-[14px] text-neutral-800 dark:text-neutral-200">{meta.comment.body}</span>
-                  <button
-                    type="button"
-                    onClick={() => deleteComment(meta.comment.id)}
-                    className="absolute -right-2 -top-2 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-400 opacity-0 shadow-sm transition-all hover:border-red-200 hover:bg-red-50 hover:text-red-500 group-hover/comment:opacity-100 dark:border-neutral-600 dark:bg-neutral-800 dark:hover:border-red-700 dark:hover:bg-red-900/40"
-                    title="Delete comment"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              );
-            }
-            return null;
-          }}
+          renderAnnotation={(annotation) => (
+            <DiffAnnotation
+              annotation={annotation}
+              onSubmitComment={addComment}
+              onCancelComment={clearCommentTarget}
+              onResolveThread={resolveThread}
+            />
+          )}
           renderHeaderPrefix={(item) => {
             const isCollapsed = item.collapsed ?? false;
             return (
