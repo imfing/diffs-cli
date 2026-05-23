@@ -18,7 +18,12 @@ import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { isAppColorScheme, type AppColorScheme } from "@/lib/colorScheme";
 import type { DiffThemeId } from "./types";
-import { colorSchemeOptions, diffThemeOptions, headerIconButtonClass, isDiffThemeId } from "./helpers";
+import {
+  colorSchemeOptions,
+  diffThemeOptions,
+  headerIconButtonClass,
+  isDiffThemeId,
+} from "./helpers";
 
 const settingsRowClass = "flex items-center justify-between gap-4 py-1.5 text-sm";
 

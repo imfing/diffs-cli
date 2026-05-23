@@ -149,13 +149,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
 
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
-  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(() => readStoredDiffTheme() ?? "pierre");
+  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(
+    () => readStoredDiffTheme() ?? "pierre",
+  );
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [showBackground, setShowBackground] = useState(() => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true);
-  const [showLineNumbers, setShowLineNumbers] = useState(() => readStoredBool(STORAGE_LINE_NUMBERS) ?? true);
+  const [showBackground, setShowBackground] = useState(
+    () => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true,
+  );
+  const [showLineNumbers, setShowLineNumbers] = useState(
+    () => readStoredBool(STORAGE_LINE_NUMBERS) ?? true,
+  );
   const [wordWrap, setWordWrap] = useState(() => readStoredBool(STORAGE_WORD_WRAP) ?? false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -219,10 +225,16 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         if (typeof nextConfig.wordWrap === "boolean" && readStoredBool(STORAGE_WORD_WRAP) == null) {
           setWordWrap(nextConfig.wordWrap);
         }
-        if (typeof nextConfig.lineNumbers === "boolean" && readStoredBool(STORAGE_LINE_NUMBERS) == null) {
+        if (
+          typeof nextConfig.lineNumbers === "boolean" &&
+          readStoredBool(STORAGE_LINE_NUMBERS) == null
+        ) {
           setShowLineNumbers(nextConfig.lineNumbers);
         }
-        if (typeof nextConfig.lineBackgrounds === "boolean" && readStoredBool(STORAGE_LINE_BACKGROUNDS) == null) {
+        if (
+          typeof nextConfig.lineBackgrounds === "boolean" &&
+          readStoredBool(STORAGE_LINE_BACKGROUNDS) == null
+        ) {
           setShowBackground(nextConfig.lineBackgrounds);
         }
       })
@@ -311,7 +323,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         if (!ignore) setPullRequestInfo({ endpoint: pullRequestInfoEndpoint, info });
       })
       .catch(() => {
-        if (!ignore) setPullRequestInfo((current) => (current?.endpoint === pullRequestInfoEndpoint ? null : current));
+        if (!ignore)
+          setPullRequestInfo((current) =>
+            current?.endpoint === pullRequestInfoEndpoint ? null : current,
+          );
       });
     return () => {
       ignore = true;
@@ -338,7 +353,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
   const files = useMemo<FileDiffMetadata[]>(() => {
     if (effectivePatchState.status !== "loaded" || !effectivePatchState.patch) return [];
-    const parsed = parsePatchFiles(effectivePatchState.patch, patchCacheKeyPrefix(effectivePatchState.patch));
+    const parsed = parsePatchFiles(
+      effectivePatchState.patch,
+      patchCacheKeyPrefix(effectivePatchState.patch),
+    );
     return parsed.flatMap((p) => p.files);
   }, [effectivePatchState]);
   const codeViewKey = effectivePatchState.patch ?? "empty";
@@ -522,7 +540,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   );
 
   const submitPendingComments = useCallback(async () => {
-    if (commentsEndpoint == null || pendingCommentThreads.length === 0 || submittingPendingComments) {
+    if (
+      commentsEndpoint == null ||
+      pendingCommentThreads.length === 0 ||
+      submittingPendingComments
+    ) {
       return;
     }
     setSubmittingPendingComments(true);
@@ -536,7 +558,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           body: JSON.stringify(draft),
         });
         setCommentThreads((prev) => [
-          ...prev.filter((thread) => thread.id !== pendingThread.id && thread.id !== submittedThread.id),
+          ...prev.filter(
+            (thread) => thread.id !== pendingThread.id && thread.id !== submittedThread.id,
+          ),
           submittedThread,
         ]);
       }
@@ -614,7 +638,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const codeViewOptions = useMemo(
     () => ({
       theme: selectedDiffTheme.theme,
-      themeType: selectedDiffTheme.themeType === "system" ? resolvedAppColorScheme : selectedDiffTheme.themeType,
+      themeType:
+        selectedDiffTheme.themeType === "system"
+          ? resolvedAppColorScheme
+          : selectedDiffTheme.themeType,
       diffStyle,
       hunkSeparators: "line-info" as const,
       stickyHeaders: true,

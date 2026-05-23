@@ -66,7 +66,8 @@ function pullRequestStatusClass(info: PullRequestInfo) {
   const status = pullRequestStatus(info);
   if (status === "Open") return "bg-[#1f883d] text-white";
   if (status === "Merged") return "bg-[#8250df] text-white";
-  if (status === "Draft") return "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200";
+  if (status === "Draft")
+    return "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200";
   return "bg-[#cf222e] text-white";
 }
 
@@ -195,7 +196,10 @@ export function DiffToolbar({
         </div>
       ) : (
         <div className="mr-auto flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400" title={prUrl}>
+          <span
+            className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
+            title={prUrl}
+          >
             {remoteTitle.repo}
           </span>
           {remoteTitle.pullRequest !== "" && (
@@ -213,7 +217,11 @@ export function DiffToolbar({
                   </button>
                 }
               />
-              <PopoverContent align="start" sideOffset={8} className="w-[460px] max-w-[calc(100vw-24px)] gap-3 p-3">
+              <PopoverContent
+                align="start"
+                sideOffset={8}
+                className="w-[460px] max-w-[calc(100vw-24px)] gap-3 p-3"
+              >
                 {pullRequestInfo ? (
                   <>
                     {baseBranch !== "" && headBranch !== "" && (
@@ -264,11 +272,15 @@ export function DiffToolbar({
                         <div className="text-muted-foreground">Deleted</div>
                       </div>
                       <div className="rounded-md bg-muted px-2 py-1.5">
-                        <div className="font-medium">{formatPullRequestCount(pullRequestInfo.changedFiles)}</div>
+                        <div className="font-medium">
+                          {formatPullRequestCount(pullRequestInfo.changedFiles)}
+                        </div>
                         <div className="text-muted-foreground">Files</div>
                       </div>
                       <div className="rounded-md bg-muted px-2 py-1.5">
-                        <div className="font-medium">{formatPullRequestCount(pullRequestInfo.commits)}</div>
+                        <div className="font-medium">
+                          {formatPullRequestCount(pullRequestInfo.commits)}
+                        </div>
                         <div className="text-muted-foreground">Commits</div>
                       </div>
                     </div>
