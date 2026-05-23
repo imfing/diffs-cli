@@ -33,7 +33,7 @@ diffs local
 diffs local --host localhost --port 4321 --dir /path/to/repo
 diffs pr /org/repo/pull/123
 diffs pr https://github.com/org/repo/pull/123
-diffs pr --github-host github.example.com /org/repo/pull/123`}
+diffs pr --gh-host ghe.example.com /org/repo/pull/123`}
         </pre>
       </div>
     </main>

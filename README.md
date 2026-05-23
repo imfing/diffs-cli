@@ -41,7 +41,9 @@ Common flags:
 
 ```sh
 diffs local --port 4321 --dir /path/to/repo
-diffs pr --github-host github.example.com /org/repo/pull/123
+diffs pr https://ghe.example.com/org/repo/pull/123
+GH_HOST=ghe.example.com diffs pr /org/repo/pull/123
+diffs pr --gh-host ghe.example.com /org/repo/pull/123
 ```
 
 ### Large pull requests

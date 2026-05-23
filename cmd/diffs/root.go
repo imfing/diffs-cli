@@ -16,19 +16,19 @@ const (
 )
 
 type cliOptions struct {
-	host       string
-	port       int
-	githubHost string
-	dir        string
-	noOpen     bool
+	host   string
+	port   int
+	ghHost string
+	dir    string
+	noOpen bool
 }
 
 func newRootCommand(started time.Time) *cobra.Command {
 	opts := &cliOptions{
-		host:       defaultHost,
-		port:       defaultPort,
-		githubHost: defaultGithubHost(),
-		dir:        defaultDir,
+		host:   defaultHost,
+		port:   defaultPort,
+		ghHost: defaultGithubHost(),
+		dir:    defaultDir,
 	}
 	root := &cobra.Command{
 		Use:           "diffs [flags]",
@@ -69,22 +69,22 @@ func newPRCommand(opts *cliOptions, started time.Time) *cobra.Command {
 		Short: "Review a GitHub pull request",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			targetPath, err := targetPathFromArgs(args)
+			target, err := prTargetFromArgs(args)
 			if err != nil {
 				return err
 			}
-			return runServerTarget(cmd, opts, targetPath, started)
+			return runServerTarget(cmd, opts.withResolvedGitHubHost(cmd, target.Host), target.Path, started)
 		},
 	}
 	addServeFlags(cmd, opts, true)
 	return cmd
 }
 
-func addServeFlags(cmd *cobra.Command, opts *cliOptions, includeGitHubHost bool) {
+func addServeFlags(cmd *cobra.Command, opts *cliOptions, includeGHHost bool) {
 	cmd.Flags().StringVar(&opts.host, "host", opts.host, "host to serve the review UI on")
 	cmd.Flags().IntVar(&opts.port, "port", opts.port, "port to serve the review UI on")
-	if includeGitHubHost {
-		cmd.Flags().StringVar(&opts.githubHost, "github-host", opts.githubHost, "GitHub host used by gh api")
+	if includeGHHost {
+		cmd.Flags().StringVar(&opts.ghHost, "gh-host", opts.ghHost, "GitHub host used by gh api")
 	}
 	cmd.Flags().BoolVar(&opts.noOpen, "no-open", false, "do not open the browser automatically")
 }
@@ -94,4 +94,12 @@ func defaultGithubHost() string {
 		return host
 	}
 	return server.DefaultGitHubHost
+}
+
+func (opts *cliOptions) withResolvedGitHubHost(cmd *cobra.Command, targetHost string) *cliOptions {
+	next := *opts
+	if strings.TrimSpace(targetHost) != "" && !cmd.Flags().Changed("gh-host") {
+		next.ghHost = targetHost
+	}
+	return &next
 }

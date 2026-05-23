@@ -39,7 +39,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 
 	cfg := server.Config{
 		CWD:        opts.dir,
-		GitHubHost: opts.githubHost,
+		GitHubHost: opts.ghHost,
 		UI:         appCfg.UI,
 		Watch:      targetPath == "/local",
 	}

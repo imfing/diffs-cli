@@ -15,6 +15,11 @@ type listenFallback struct {
 	Actual    string
 }
 
+type prTarget struct {
+	Path string
+	Host string
+}
+
 func listenAddrFromOptions(host string, port int) (string, error) {
 	if port < 0 || port > 65535 {
 		return "", fmt.Errorf("port must be between 0 and 65535")
@@ -85,15 +90,25 @@ func browserURL(addr net.Addr, targetPath string) string {
 }
 
 func targetPathFromArgs(args []string) (string, error) {
+	target, err := prTargetFromArgs(args)
+	if err != nil {
+		return "", err
+	}
+	return target.Path, nil
+}
+
+func prTargetFromArgs(args []string) (prTarget, error) {
 	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-		return "", fmt.Errorf("expected one GitHub PR target")
+		return prTarget{}, fmt.Errorf("expected one GitHub PR target")
 	}
 	target := strings.TrimSpace(args[0])
+	host := ""
 	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
 		req, err := http.NewRequest(http.MethodGet, target, nil)
 		if err != nil {
-			return "", err
+			return prTarget{}, err
 		}
+		host = req.URL.Hostname()
 		target = req.URL.Path
 	}
 	if !strings.HasPrefix(target, "/") {
@@ -101,7 +116,7 @@ func targetPathFromArgs(args []string) (string, error) {
 	}
 	parts := strings.Split(strings.Trim(target, "/"), "/")
 	if len(parts) == 4 && parts[2] == "pull" && parts[3] != "" {
-		return "/" + strings.Join(parts, "/"), nil
+		return prTarget{Path: "/" + strings.Join(parts, "/"), Host: host}, nil
 	}
-	return "", fmt.Errorf("target must be a GitHub PR URL or /org/repo/pull/123")
+	return prTarget{}, fmt.Errorf("target must be a GitHub PR URL or /org/repo/pull/123")
 }

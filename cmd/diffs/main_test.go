@@ -51,6 +51,66 @@ func TestTargetPathFromArgs(t *testing.T) {
 	}
 }
 
+func TestPRTargetFromArgsIncludesURLHost(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantPath string
+		wantHost string
+	}{
+		{name: "path", args: []string{"/org/repo/pull/123"}, wantPath: "/org/repo/pull/123"},
+		{name: "path without leading slash", args: []string{"org/repo/pull/123"}, wantPath: "/org/repo/pull/123"},
+		{name: "github url", args: []string{"https://github.com/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.com"},
+		{name: "enterprise url", args: []string{"https://github.example.com/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "enterprise url with port", args: []string{"https://github.example.com:8443/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := prTargetFromArgs(tt.args)
+			if err != nil {
+				t.Fatalf("prTargetFromArgs() error = %v", err)
+			}
+			if got.Path != tt.wantPath || got.Host != tt.wantHost {
+				t.Fatalf("prTargetFromArgs() = %+v, want path %q host %q", got, tt.wantPath, tt.wantHost)
+			}
+		})
+	}
+}
+
+func TestResolveGitHubHostPrefersURLHostWhenFlagOmitted(t *testing.T) {
+	cmd := newRootCommand(time.Time{})
+	prCmd, _, err := cmd.Find([]string{"pr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := &cliOptions{ghHost: "github.com"}
+
+	got := opts.withResolvedGitHubHost(prCmd, "github.example.com")
+	if got.ghHost != "github.example.com" {
+		t.Fatalf("ghHost = %q, want URL host", got.ghHost)
+	}
+	if opts.ghHost != "github.com" {
+		t.Fatalf("original ghHost mutated to %q", opts.ghHost)
+	}
+}
+
+func TestResolveGitHubHostKeepsExplicitFlag(t *testing.T) {
+	cmd := newRootCommand(time.Time{})
+	prCmd, _, err := cmd.Find([]string{"pr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prCmd.Flags().Set("gh-host", "explicit.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	opts := &cliOptions{ghHost: "explicit.example.com"}
+
+	got := opts.withResolvedGitHubHost(prCmd, "url.example.com")
+	if got.ghHost != "explicit.example.com" {
+		t.Fatalf("ghHost = %q, want explicit flag host", got.ghHost)
+	}
+}
+
 func TestTargetPathFromArgsRejectsInvalidTarget(t *testing.T) {
 	tests := [][]string{
 		nil,
@@ -348,6 +408,9 @@ func TestRootCommandHelpShowsSubcommandsAndDir(t *testing.T) {
 	if strings.Contains(got, "--github-host") {
 		t.Fatalf("root help output should not include pr-only flag --github-host:\n%s", got)
 	}
+	if strings.Contains(got, "--gh-host") {
+		t.Fatalf("root help output should not include pr-only flag --gh-host:\n%s", got)
+	}
 }
 
 func TestPRCommandHelp(t *testing.T) {
@@ -364,12 +427,16 @@ func TestPRCommandHelp(t *testing.T) {
 	for _, want := range []string{
 		"diffs pr [github-pr-url|/org/repo/pull/123]",
 		"--host string",
+		"--gh-host string",
 		"--port int",
 		"--dir string",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pr help output missing %q in:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "--github-host") {
+		t.Fatalf("pr help output should not include removed flag --github-host:\n%s", got)
 	}
 }
 
