@@ -25,7 +25,7 @@ Install with Homebrew:
 
 ```sh
 brew tap imfing/tap
-brew install diffs
+brew install --cask diffs
 ```
 
 Run from any git repository:
