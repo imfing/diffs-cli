@@ -22,13 +22,11 @@ import {
 } from "@/components/ui/popover";
 import type { AppColorScheme } from "@/lib/colorScheme";
 import type { AppConfig, DiffStyle, DiffThemeId, PullRequestInfo } from "./types";
-import { displayLocalPath } from "./helpers";
+import { displayLocalPath, headerIconButtonClass } from "./helpers";
 
 const DiffSettingsPopover = lazy(() =>
   import("./DiffSettingsPopover").then((m) => ({ default: m.DiffSettingsPopover })),
 );
-
-const headerIconButtonClass = "size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]";
 const headerIconLinkClass = buttonVariants({
   variant: "ghost",
   size: "icon-sm",

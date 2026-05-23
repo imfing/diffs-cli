@@ -101,3 +101,5 @@ export function localRepoTitle(cwd: string, branch: string): string {
   const cleanedBranch = branch.trim();
   return cleanedBranch === "" ? dir : `${dir} (${cleanedBranch})`;
 }
+
+export const headerIconButtonClass = "size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]";

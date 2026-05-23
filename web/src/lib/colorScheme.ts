@@ -3,7 +3,8 @@ export type ResolvedColorScheme = "dark" | "light";
 
 export const colorSchemeStorageKey = "diffs-color-scheme";
 
-const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const colorSchemeQuery =
+  typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
 export function isAppColorScheme(value: unknown): value is AppColorScheme {
   return value === "dark" || value === "light" || value === "system";
@@ -19,7 +20,7 @@ export function initialColorScheme(): AppColorScheme {
 }
 
 export function resolveColorScheme(preference: AppColorScheme): ResolvedColorScheme {
-  return preference === "dark" || (preference === "system" && colorSchemeQuery.matches)
+  return preference === "dark" || (preference === "system" && colorSchemeQuery?.matches)
     ? "dark"
     : "light";
 }
@@ -36,6 +37,7 @@ export function persistColorScheme(preference: AppColorScheme) {
 }
 
 export function watchSystemColorScheme(onChange?: (scheme: ResolvedColorScheme) => void) {
+  if (!colorSchemeQuery) return () => {};
   const listener = () => {
     onChange?.(resolveColorScheme("system"));
     const current = document.documentElement.dataset.colorScheme;

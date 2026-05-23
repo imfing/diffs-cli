@@ -16,13 +16,11 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
-import type { AppColorScheme } from "@/lib/colorScheme";
+import { isAppColorScheme, type AppColorScheme } from "@/lib/colorScheme";
 import type { DiffThemeId } from "./types";
-import { colorSchemeOptions, diffThemeOptions } from "./helpers";
+import { colorSchemeOptions, diffThemeOptions, headerIconButtonClass, isDiffThemeId } from "./helpers";
 
 const settingsRowClass = "flex items-center justify-between gap-4 py-1.5 text-sm";
-
-const headerIconButtonClass = "size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]";
 
 export function DiffSettingsPopover({
   open,
@@ -79,7 +77,7 @@ export function DiffSettingsPopover({
             <Select
               value={appColorScheme}
               onValueChange={(value) => {
-                onColorSchemeChange(value as AppColorScheme);
+                if (isAppColorScheme(value)) onColorSchemeChange(value);
               }}
             >
               <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
@@ -105,7 +103,7 @@ export function DiffSettingsPopover({
             <Select
               value={diffThemeId}
               onValueChange={(value) => {
-                onDiffThemeChange(value as DiffThemeId);
+                if (isDiffThemeId(value)) onDiffThemeChange(value);
               }}
             >
               <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">

@@ -83,6 +83,28 @@ function patchCacheKeyPrefix(patch: string): string {
   return (h >>> 0).toString(36);
 }
 
+function annotationsChanged(
+  current: readonly { lineNumber: number; side?: string; metadata?: AnnotationMeta }[] | undefined,
+  next: readonly { lineNumber: number; side?: string; metadata?: AnnotationMeta }[],
+): boolean {
+  const curLen = current?.length ?? 0;
+  if (curLen !== next.length) return true;
+  if (curLen === 0) return false;
+  for (let i = 0; i < curLen; i++) {
+    const a = current![i];
+    const b = next[i];
+    if (a.side !== b.side || a.lineNumber !== b.lineNumber) return true;
+    if (a.metadata?.type !== b.metadata?.type) return true;
+    if (
+      a.metadata?.type === "comment" &&
+      b.metadata?.type === "comment" &&
+      a.metadata.thread.id !== b.metadata.thread.id
+    )
+      return true;
+  }
+  return false;
+}
+
 function createPendingThread(target: CommentTarget, body: string): ReviewThread {
   const now = new Date().toISOString();
   const draft: PendingCommentDraft = {
@@ -155,7 +177,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const isLocal = source === "local";
   const isBranch = source === "branch";
   const usesLocalStore = isLocal || isBranch;
-  const prUrl = `https://${config.githubHost}/${org}/${repo}/pull/${number}`;
+  const prUrl =
+    org && repo && number ? `https://${config.githubHost}/${org}/${repo}/pull/${number}` : "";
   const commentsEndpoint = usesLocalStore
     ? "/api/comments"
     : org && repo && number
@@ -179,8 +202,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   });
 
   useEffect(() => {
+    let ignore = false;
     apiFetch<AppConfig>("/api/config")
       .then((nextConfig) => {
+        if (ignore) return;
         setConfig(nextConfig);
         if (isAppColorScheme(nextConfig.colorScheme) && storedColorScheme() == null) {
           setAppColorScheme(nextConfig.colorScheme);
@@ -201,9 +226,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           setShowBackground(nextConfig.lineBackgrounds);
         }
       })
-      .catch(() => {
-        setConfig((current) => current);
-      });
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -575,10 +601,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         });
       }
 
-      const changed =
-        (current.annotations?.length ?? 0) !== annotations.length ||
-        JSON.stringify(current.annotations) !== JSON.stringify(annotations);
-      if (!changed) continue;
+      if (!annotationsChanged(current.annotations, annotations)) continue;
 
       viewer.updateItem({
         ...current,
