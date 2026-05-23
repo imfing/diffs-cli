@@ -103,20 +103,38 @@ func prTargetFromArgs(args []string) (prTarget, error) {
 	}
 	target := strings.TrimSpace(args[0])
 	host := ""
-	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+	lowerTarget := strings.ToLower(target)
+	if strings.HasPrefix(lowerTarget, "http://") || strings.HasPrefix(lowerTarget, "https://") {
 		req, err := http.NewRequest(http.MethodGet, target, nil)
 		if err != nil {
 			return prTarget{}, err
 		}
-		host = req.URL.Hostname()
+		host = strings.ToLower(req.URL.Hostname())
+		if host == "" {
+			return prTarget{}, fmt.Errorf("target URL must include a host")
+		}
 		target = req.URL.Path
 	}
 	if !strings.HasPrefix(target, "/") {
 		target = "/" + target
 	}
 	parts := strings.Split(strings.Trim(target, "/"), "/")
-	if len(parts) == 4 && parts[2] == "pull" && parts[3] != "" {
-		return prTarget{Path: "/" + strings.Join(parts, "/"), Host: host}, nil
+	if len(parts) >= 4 && parts[2] == "pull" && parts[3] != "" {
+		if len(parts) == 4 || isPullRequestSubpage(parts[4:]) {
+			return prTarget{Path: "/" + strings.Join(parts[:4], "/"), Host: host}, nil
+		}
 	}
 	return prTarget{}, fmt.Errorf("target must be a GitHub PR URL or /org/repo/pull/123")
+}
+
+func isPullRequestSubpage(parts []string) bool {
+	if len(parts) != 1 {
+		return false
+	}
+	switch parts[0] {
+	case "checks", "commits", "files", "reviews":
+		return true
+	default:
+		return false
+	}
 }

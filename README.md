@@ -32,7 +32,7 @@ This opens `http://127.0.0.1:3433/local` and reloads when files change.
 Review a GitHub pull request (requires the [GitHub CLI](https://cli.github.com)):
 
 ```sh
-diffs pr https://github.com/org/repo/pull/123
+diffs pr org/repo/pull/123
 ```
 
 <img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="800">
@@ -42,8 +42,8 @@ Common flags:
 ```sh
 diffs local --port 4321 --dir /path/to/repo
 diffs pr https://ghe.example.com/org/repo/pull/123
-GH_HOST=ghe.example.com diffs pr /org/repo/pull/123
-diffs pr --gh-host ghe.example.com /org/repo/pull/123
+GH_HOST=ghe.example.com diffs pr org/repo/pull/123
+diffs pr --gh-host ghe.example.com org/repo/pull/123
 ```
 
 ### Large pull requests

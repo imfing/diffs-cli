@@ -63,6 +63,12 @@ func TestPRTargetFromArgsIncludesURLHost(t *testing.T) {
 		{name: "github url", args: []string{"https://github.com/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.com"},
 		{name: "enterprise url", args: []string{"https://github.example.com/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
 		{name: "enterprise url with port", args: []string{"https://github.example.com:8443/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "mixed case host", args: []string{"https://GITHUB.example.com/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "uppercase scheme", args: []string{"HTTPS://github.example.com/org/repo/pull/123"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "files subpage", args: []string{"https://github.example.com/org/repo/pull/123/files"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "commits subpage", args: []string{"https://github.example.com/org/repo/pull/123/commits"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "checks subpage", args: []string{"https://github.example.com/org/repo/pull/123/checks"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
+		{name: "reviews subpage", args: []string{"https://github.example.com/org/repo/pull/123/reviews"}, wantPath: "/org/repo/pull/123", wantHost: "github.example.com"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -116,6 +122,9 @@ func TestTargetPathFromArgsRejectsInvalidTarget(t *testing.T) {
 		nil,
 		{""},
 		{"org/repo/issues/123"},
+		{"http:///org/repo/pull/123"},
+		{"https://github.example.com/org/repo/pull/123/random"},
+		{"https://github.example.com/org/repo/pull/123/files/1"},
 	}
 	for _, args := range tests {
 		if _, err := targetPathFromArgs(args); err == nil {
