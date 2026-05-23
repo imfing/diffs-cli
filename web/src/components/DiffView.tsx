@@ -385,7 +385,26 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   }, []);
   const handleDiffThemeChange = useCallback((id: DiffThemeId) => {
     setDiffThemeId(id);
-    localStorage.setItem("diff-theme", id);
+    localStorage.setItem(STORAGE_DIFF_THEME, id);
+  }, []);
+  const handleDiffStyleToggle = useCallback(() => {
+    setDiffStyle((prev) => {
+      const next: DiffStyle = prev === "split" ? "unified" : "split";
+      localStorage.setItem(STORAGE_DIFF_STYLE, next);
+      return next;
+    });
+  }, []);
+  const handleWordWrapChange = useCallback((value: boolean) => {
+    setWordWrap(value);
+    localStorage.setItem(STORAGE_WORD_WRAP, String(value));
+  }, []);
+  const handleShowLineNumbersChange = useCallback((value: boolean) => {
+    setShowLineNumbers(value);
+    localStorage.setItem(STORAGE_LINE_NUMBERS, String(value));
+  }, []);
+  const handleShowBackgroundChange = useCallback((value: boolean) => {
+    setShowBackground(value);
+    localStorage.setItem(STORAGE_LINE_BACKGROUNDS, String(value));
   }, []);
 
   const clearCommentTarget = useCallback(() => {
@@ -649,7 +668,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         showLineNumbers={showLineNumbers}
         isLocal={isLocal}
         onColorSchemeChange={handleColorSchemeChange}
-        onDiffStyleToggle={() => setDiffStyle((s) => (s === "split" ? "unified" : "split"))}
+        onDiffStyleToggle={handleDiffStyleToggle}
         onDiffThemeChange={handleDiffThemeChange}
         onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
@@ -660,9 +679,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         wordWrap={wordWrap}
         prUrl={prUrl}
         selectedDiffThemeLabel={selectedDiffTheme.label}
-        setShowBackground={setShowBackground}
-        setShowLineNumbers={setShowLineNumbers}
-        setWordWrap={setWordWrap}
+        setShowBackground={handleShowBackgroundChange}
+        setShowLineNumbers={handleShowLineNumbersChange}
+        setWordWrap={handleWordWrapChange}
         settingsOpen={settingsOpen}
         sidebarOpen={sidebarOpen}
         submittingPendingComments={submittingPendingComments}
