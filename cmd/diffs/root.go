@@ -46,6 +46,7 @@ func newRootCommand(started time.Time) *cobra.Command {
 		newLocalCommand(opts, started),
 		newPRCommand(opts, started),
 		newCommentsCommand(opts),
+		newVersionCommand(),
 	)
 	return root
 }

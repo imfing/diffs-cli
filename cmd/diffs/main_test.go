@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -140,6 +141,38 @@ func TestRootCommandRejectsDirectPRTarget(t *testing.T) {
 	cmd.SetArgs([]string{"/org/repo/pull/123"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("root command accepted direct PR target, want explicit pr subcommand")
+	}
+}
+
+func TestUnknownCommandPrintsRootHelp(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"bogus"})
+
+	err := executeRootCommand(cmd)
+	if err == nil {
+		t.Fatal("unknown command succeeded, want error")
+	}
+	var quiet quietError
+	if !errors.As(err, &quiet) {
+		t.Fatalf("error = %T, want quietError", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		`unknown command "bogus" for "diffs"`,
+		"Usage:",
+		"diffs [flags]",
+		"Available Commands:",
+		"local",
+		"pr",
+		"version",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("unknown command output missing %q in:\n%s", want, got)
+		}
 	}
 }
 
@@ -408,6 +441,7 @@ func TestRootCommandHelpShowsSubcommandsAndDir(t *testing.T) {
 		"diffs [flags]",
 		"local",
 		"pr",
+		"version",
 		"--dir string",
 	} {
 		if !strings.Contains(got, want) {
@@ -446,6 +480,21 @@ func TestPRCommandHelp(t *testing.T) {
 	}
 	if strings.Contains(got, "--github-host") {
 		t.Fatalf("pr help output should not include removed flag --github-host:\n%s", got)
+	}
+}
+
+func TestVersionCommandPrintsDefaultDevVersion(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"version"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("version failed: %v", err)
+	}
+
+	if got := out.String(); got != "dev\n" {
+		t.Fatalf("version output = %q, want %q", got, "dev\n")
 	}
 }
 
