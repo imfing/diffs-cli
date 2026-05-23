@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router";
 import { Home } from "./components/Home";
 import { DiffView } from "./components/DiffView";
+import { NotFound } from "./components/NotFound";
 
 export default function App() {
   return (
@@ -9,6 +10,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/local" element={<DiffView source="local" />} />
         <Route path="/:org/:repo/pull/:number" element={<DiffView />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );
