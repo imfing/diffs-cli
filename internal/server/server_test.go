@@ -242,6 +242,8 @@ func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	git(t, dir, "add", ".gitignore")
 	git(t, dir, "commit", "-m", "init")
@@ -279,6 +281,8 @@ func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
 func TestEventsStreamIgnoresGitCleanBuildOutput(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	git(t, dir, "add", ".gitignore")
 	git(t, dir, "commit", "-m", "init")
@@ -357,6 +361,8 @@ func TestWatcherDisabledDoesNotObserveLocalChanges(t *testing.T) {
 func TestGitStatusReturnsChangedPaths(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", ".gitignore", "tracked.txt")
@@ -390,6 +396,8 @@ func TestGitStatusReturnsChangedPaths(t *testing.T) {
 func TestGitStatusActions(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")

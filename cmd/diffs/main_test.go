@@ -62,6 +62,7 @@ func TestRootCommandRejectsDirectPRTarget(t *testing.T) {
 }
 
 func TestLocalCommandRejectsNonGitRepository(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
 	dir := t.TempDir()
 	var errOut bytes.Buffer
 	cmd := newRootCommand(time.Time{})
