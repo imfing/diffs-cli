@@ -21,6 +21,13 @@ Fast, beautiful diffs on the Go.
 
 Download a pre-built binary from the [releases page](https://github.com/imfing/diffs-cli/releases), or build from source.
 
+Install with Homebrew:
+
+```sh
+brew tap imfing/tap
+brew install diffs
+```
+
 Run from any git repository:
 
 ```sh
