@@ -46,6 +46,13 @@ diffs pr org/repo/pull/123  # PR in any repo
 
 <img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="800">
 
+Review the current branch against a base locally:
+
+```sh
+diffs branch          # infers the base
+diffs branch main     # explicit base
+```
+
 Common flags:
 
 ```sh

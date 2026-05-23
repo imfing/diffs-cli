@@ -162,6 +162,155 @@ func stubGHPRView(t *testing.T, fn func(context.Context, string) (string, error)
 	t.Cleanup(func() { runGHPRView = orig })
 }
 
+func stubGHPRBaseRef(t *testing.T, fn func(context.Context, string) (string, error)) {
+	t.Helper()
+	orig := runGHPRBaseRef
+	runGHPRBaseRef = fn
+	t.Cleanup(func() { runGHPRBaseRef = orig })
+}
+
+func stubGHRepoDefaultBranch(t *testing.T, fn func(context.Context, string) (string, error)) {
+	t.Helper()
+	orig := runGHRepoDefaultBranch
+	runGHRepoDefaultBranch = fn
+	t.Cleanup(func() { runGHRepoDefaultBranch = orig })
+}
+
+func ghFails(err string) func(context.Context, string) (string, error) {
+	return func(context.Context, string) (string, error) { return "", errors.New(err) }
+}
+
+func TestResolveBranchBaseUsesExplicitArgument(t *testing.T) {
+	stubGHPRBaseRef(t, ghFails("should not be called"))
+	stubGHRepoDefaultBranch(t, ghFails("should not be called"))
+
+	got, err := resolveBranchBase([]string{"release/v2"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "release/v2" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "release/v2")
+	}
+}
+
+func TestResolveBranchBasePrefersPRBase(t *testing.T) {
+	stubGHPRBaseRef(t, func(context.Context, string) (string, error) { return "develop", nil })
+	stubGHRepoDefaultBranch(t, ghFails("should not be called"))
+
+	dir := repoWithLocalBranches(t, "develop")
+
+	got, err := resolveBranchBase(nil, dir)
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "develop" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "develop")
+	}
+}
+
+func TestResolveBranchBaseFallsBackToRepoDefault(t *testing.T) {
+	stubGHPRBaseRef(t, ghFails("no PR for branch"))
+	stubGHRepoDefaultBranch(t, func(context.Context, string) (string, error) { return "trunk", nil })
+
+	dir := repoWithLocalBranches(t, "trunk")
+
+	got, err := resolveBranchBase(nil, dir)
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "trunk" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "trunk")
+	}
+}
+
+func TestResolveBranchBaseFallsBackToOriginRefWhenLocalMissing(t *testing.T) {
+	stubGHPRBaseRef(t, ghFails("no PR"))
+	stubGHRepoDefaultBranch(t, func(context.Context, string) (string, error) { return "main", nil })
+
+	dir := repoWithOriginBranch(t, "main")
+
+	got, err := resolveBranchBase(nil, dir)
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "origin/main" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "origin/main")
+	}
+}
+
+func TestResolveBranchBaseSkipsInferredRefThatDoesNotResolve(t *testing.T) {
+	stubGHPRBaseRef(t, func(context.Context, string) (string, error) { return "ghost", nil })
+	stubGHRepoDefaultBranch(t, func(context.Context, string) (string, error) { return "trunk", nil })
+
+	dir := repoWithLocalBranches(t, "trunk")
+
+	got, err := resolveBranchBase(nil, dir)
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "trunk" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "trunk")
+	}
+}
+
+func TestResolveBranchBaseFallsBackToMainWhenExists(t *testing.T) {
+	stubGHPRBaseRef(t, ghFails("no PR"))
+	stubGHRepoDefaultBranch(t, ghFails("not a repo"))
+
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "f")
+	git(t, dir, "commit", "-m", "init")
+
+	got, err := resolveBranchBase(nil, dir)
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "main" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "main")
+	}
+}
+
+func TestResolveBranchBaseFallsBackToMasterWhenMainMissing(t *testing.T) {
+	stubGHPRBaseRef(t, ghFails("no PR"))
+	stubGHRepoDefaultBranch(t, ghFails("not a repo"))
+
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "master")
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "f")
+	git(t, dir, "commit", "-m", "init")
+
+	got, err := resolveBranchBase(nil, dir)
+	if err != nil {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+	if got != "master" {
+		t.Fatalf("resolveBranchBase() = %q, want %q", got, "master")
+	}
+}
+
+func TestResolveBranchBaseErrorsWhenNothingResolves(t *testing.T) {
+	stubGHPRBaseRef(t, ghFails("no PR"))
+	stubGHRepoDefaultBranch(t, ghFails("not a repo"))
+
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "feature")
+
+	_, err := resolveBranchBase(nil, dir)
+	if err == nil {
+		t.Fatal("resolveBranchBase() succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "could not infer base") {
+		t.Fatalf("resolveBranchBase() error = %v", err)
+	}
+}
+
 func TestRepoFromRemoteURL(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -277,6 +426,7 @@ func TestUnknownCommandPrintsRootHelp(t *testing.T) {
 		"Usage:",
 		"diffs [flags]",
 		"Available Commands:",
+		"branch",
 		"pr",
 		"version",
 	} {
@@ -309,12 +459,46 @@ func TestLocalCommandRejectsNonGitRepository(t *testing.T) {
 		"Usage:",
 		"diffs [flags]",
 		"Available Commands:",
+		"branch",
 		"pr",
 		"--dir string",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("git help missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestBranchCommandRejectsNonGitRepository(t *testing.T) {
+	for _, args := range [][]string{
+		{"--dir", t.TempDir(), "branch", "main", "--no-open"},
+		{"--dir", t.TempDir(), "branch", "--no-open"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var errOut bytes.Buffer
+			cmd := newRootCommand(time.Time{})
+			cmd.SetOut(&errOut)
+			cmd.SetErr(&errOut)
+			cmd.SetArgs(args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("branch command succeeded outside git repository")
+			}
+			if !strings.Contains(err.Error(), "not a git repository") {
+				t.Fatalf("error = %v, want not a git repository", err)
+			}
+			got := errOut.String()
+			for _, want := range []string{
+				"error    not a git repository: " + args[1],
+				"hint     run from a git repository",
+				"Usage:",
+				"diffs branch [base]",
+			} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("branch git help missing %q in:\n%s", want, got)
+				}
+			}
+		})
 	}
 }
 
@@ -390,6 +574,26 @@ func TestBrowserURLUsesLoopbackForWildcard(t *testing.T) {
 	}
 }
 
+func TestIsLocalGitTarget(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/local", want: true},
+		{path: "/branch", want: true},
+		{path: "/branch?base=main", want: true},
+		{path: "/org/repo/pull/123", want: false},
+		{path: "/branching", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := isLocalGitTarget(tt.path); got != tt.want {
+				t.Fatalf("isLocalGitTarget() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTargetLabel(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
@@ -401,6 +605,7 @@ func TestTargetLabel(t *testing.T) {
 		want string
 	}{
 		{path: "/local", cwd: dir, want: "feature/startup"},
+		{path: "/branch?base=origin%2Fmain", cwd: dir, want: "feature/startup -> origin/main"},
 		{path: "/org/repo/pull/123", cwd: dir, want: "GitHub PR org/repo#123"},
 		{path: "/local", cwd: filepath.Join(dir, "missing"), want: "local repository"},
 	}
@@ -454,6 +659,37 @@ func git(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func repoWithLocalBranches(t *testing.T, branches ...string) string {
+	t.Helper()
+	if len(branches) == 0 {
+		t.Fatal("repoWithLocalBranches requires at least one branch name")
+	}
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", branches[0])
+	if err := os.WriteFile(filepath.Join(dir, "seed"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "seed")
+	git(t, dir, "commit", "-m", "init")
+	for _, b := range branches[1:] {
+		git(t, dir, "branch", b)
+	}
+	return dir
+}
+
+func repoWithOriginBranch(t *testing.T, branch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "seed"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "seed")
+	git(t, dir, "commit", "-m", "init")
+	git(t, dir, "update-ref", "refs/remotes/origin/"+branch, "HEAD")
+	return dir
 }
 
 func TestPrintReload(t *testing.T) {
@@ -548,6 +784,7 @@ func TestRootCommandHelpShowsSubcommandsAndDir(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"diffs [flags]",
+		"branch",
 		"pr",
 		"version",
 		"--dir string",

@@ -161,6 +161,58 @@ func TestLocalDiffIncludesStagedAndUnstagedTrackedChanges(t *testing.T) {
 	}
 }
 
+func TestBranchDiffComparesAgainstBase(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
+	git(t, dir, "add", "tracked.txt")
+	git(t, dir, "commit", "-m", "init")
+	git(t, dir, "checkout", "-b", "feat")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\ntwo\n")
+	git(t, dir, "add", "tracked.txt")
+	git(t, dir, "commit", "-m", "two")
+
+	patch, err := (&Server{cwd: dir}).branchDiff(context.Background(), "main")
+	if err != nil {
+		t.Fatalf("branchDiff() error = %v", err)
+	}
+	if !strings.Contains(patch, "+two") {
+		t.Fatalf("branchDiff() missing %q in patch:\n%s", "+two", patch)
+	}
+}
+
+func TestHandleBranchDiffRejectsMissingOrUnsafeBase(t *testing.T) {
+	srv := &Server{cwd: t.TempDir()}
+	cases := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{name: "missing", query: "", want: "base query parameter is required"},
+		{name: "blank", query: "?base=%20%20", want: "required"},
+		{name: "flag-like", query: "?base=-rf", want: "invalid base ref"},
+		{name: "control char", query: "?base=ma%09in", want: "invalid base ref"},
+		{name: "two dot rev", query: "?base=main..feature", want: "invalid base ref"},
+		{name: "parent rev", query: "?base=HEAD~1", want: "invalid base ref"},
+		{name: "peel rev", query: "?base=HEAD%5E%7Bcommit%7D", want: "invalid base ref"},
+		{name: "upstream rev", query: "?base=%40%7Bupstream%7D", want: "invalid base ref"},
+		{name: "at shortcut", query: "?base=%40", want: "invalid base ref"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/branch-diff"+tc.query, nil)
+			w := httptest.NewRecorder()
+			srv.handleBranchDiff(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
+			}
+			if !strings.Contains(w.Body.String(), tc.want) {
+				t.Fatalf("body = %q, want substring %q", w.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestEventsStreamOnLocalFileChange(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef, lazy, Suspense } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, useSearchParams, Link } from "react-router";
 import {
   parsePatchFiles,
   type CodeViewItem,
@@ -117,12 +117,14 @@ function createPendingThread(target: CommentTarget, body: string): ReviewThread 
   };
 }
 
-export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
+export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch" } = {}) {
   const { org, repo, number } = useParams<{
     org: string;
     repo: string;
     number: string;
   }>();
+  const [searchParams] = useSearchParams();
+  const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
 
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
   const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(() => readStoredDiffTheme() ?? "pierre");
@@ -151,21 +153,25 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   });
 
   const isLocal = source === "local";
+  const isBranch = source === "branch";
+  const usesLocalStore = isLocal || isBranch;
   const prUrl = `https://${config.githubHost}/${org}/${repo}/pull/${number}`;
-  const commentsEndpoint = isLocal
+  const commentsEndpoint = usesLocalStore
     ? "/api/comments"
     : org && repo && number
       ? `/api/comments?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(number)}`
       : null;
   const pullRequestInfoEndpoint =
-    !isLocal && org && repo && number
+    !usesLocalStore && org && repo && number
       ? `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
       : null;
-  const pageTitle = isLocal
-    ? `${localRepoTitle(config.cwd, config.gitBranch)} - diffs`
-    : org && repo && number
-      ? `${org}/${repo}/pull/${number} - diffs`
-      : "diffs";
+  const pageTitle = isBranch
+    ? `${config.gitBranch.trim() || "HEAD"} ← ${baseRef || "base"} - diffs`
+    : isLocal
+      ? `${localRepoTitle(config.cwd, config.gitBranch)} - diffs`
+      : org && repo && number
+        ? `${org}/${repo}/pull/${number} - diffs`
+        : "diffs";
   const [patchState, setPatchState] = useState<PatchLoadState>({
     error: null,
     patch: null,
@@ -227,7 +233,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     let fallbackInterval: number | undefined;
 
     const load = () => {
-      const endpoint = isLocal ? "/api/local-diff" : `/api/patch/${org}/${repo}/${number}`;
+      const endpoint = isBranch
+        ? `/api/branch-diff?base=${encodeURIComponent(baseRef)}`
+        : isLocal
+          ? "/api/local-diff"
+          : `/api/patch/${org}/${repo}/${number}`;
       apiFetch<string>(endpoint)
         .then((text) => {
           if (!ignore) {
@@ -249,9 +259,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         });
     };
 
-    if (!isLocal && (!org || !repo || !number)) return;
+    if (isBranch && baseRef === "") {
+      return;
+    }
+    if (!usesLocalStore && (!org || !repo || !number)) return;
     load();
-    if (isLocal) {
+    if (usesLocalStore) {
       eventSource = new EventSource("/api/events");
       eventSource.addEventListener("diff", load);
       fallbackInterval = window.setInterval(load, 30000);
@@ -262,7 +275,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
       eventSource?.close();
       if (fallbackInterval != null) window.clearInterval(fallbackInterval);
     };
-  }, [isLocal, org, repo, number]);
+  }, [isLocal, isBranch, usesLocalStore, baseRef, org, repo, number]);
 
   useEffect(() => {
     if (pullRequestInfoEndpoint == null) return;
@@ -283,15 +296,26 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     loadComments();
   }, [loadComments]);
 
-  const loading = patchState.status === "loading";
-  const error = patchState.status === "error" ? patchState.error : null;
+  const effectivePatchState: PatchLoadState = useMemo(
+    () =>
+      isBranch && baseRef === ""
+        ? {
+            error: "missing `base` query parameter",
+            patch: null,
+            status: "error",
+          }
+        : patchState,
+    [baseRef, isBranch, patchState],
+  );
+  const loading = effectivePatchState.status === "loading";
+  const error = effectivePatchState.status === "error" ? effectivePatchState.error : null;
 
   const files = useMemo<FileDiffMetadata[]>(() => {
-    if (patchState.status !== "loaded" || !patchState.patch) return [];
-    const parsed = parsePatchFiles(patchState.patch, patchCacheKeyPrefix(patchState.patch));
+    if (effectivePatchState.status !== "loaded" || !effectivePatchState.patch) return [];
+    const parsed = parsePatchFiles(effectivePatchState.patch, patchCacheKeyPrefix(effectivePatchState.patch));
     return parsed.flatMap((p) => p.files);
-  }, [patchState]);
-  const codeViewKey = patchState.patch ?? "empty";
+  }, [effectivePatchState]);
+  const codeViewKey = effectivePatchState.patch ?? "empty";
   const pendingCommentThreads = useMemo(
     () => commentThreads.filter((thread) => thread.pending && thread.draft),
     [commentThreads],
@@ -439,7 +463,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const addComment = useCallback(
     (body: string) => {
       if (!commentTarget) return;
-      if (!isLocal) {
+      if (!usesLocalStore) {
         setCommentThreads((prev) => [...prev, createPendingThread(commentTarget, body)]);
         clearCommentTarget();
         return;
@@ -468,7 +492,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
           clearCommentTarget();
         });
     },
-    [clearCommentTarget, commentTarget, commentsEndpoint, isLocal],
+    [clearCommentTarget, commentTarget, commentsEndpoint, usesLocalStore],
   );
 
   const submitPendingComments = useCallback(async () => {
@@ -503,7 +527,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         setCommentThreads((prev) => prev.filter((current) => current.id !== thread.id));
         return;
       }
-      if (!isLocal) return;
+      if (!usesLocalStore) return;
       apiFetch(`/api/comments/${encodeURIComponent(thread.id)}`, { method: "DELETE" })
         .then(() => {
           setCommentThreads((prev) => prev.filter((current) => current.id !== thread.id));
@@ -512,7 +536,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
           console.error("Failed to delete comment:", err);
         });
     },
-    [isLocal],
+    [usesLocalStore],
   );
 
   useEffect(() => {
@@ -644,9 +668,14 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   }
 
   if (files.length === 0) {
+    const emptyMessage = isBranch
+      ? `No commits ahead of ${baseRef || "base"}.`
+      : isLocal
+        ? "No local changes in the working tree."
+        : "No files changed in this PR.";
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 text-neutral-500">
-        <p>{isLocal ? "No local changes in the working tree." : "No files changed in this PR."}</p>
+        <p>{emptyMessage}</p>
         <Link to="/" className="text-blue-500 no-underline">
           Back
         </Link>
@@ -674,7 +703,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         diffThemeId={diffThemeId}
         showBackground={showBackground}
         showLineNumbers={showLineNumbers}
-        isLocal={isLocal}
+        isLocal={usesLocalStore}
+        baseRef={isBranch ? baseRef : undefined}
         onColorSchemeChange={handleColorSchemeChange}
         onDiffStyleToggle={handleDiffStyleToggle}
         onDiffThemeChange={handleDiffThemeChange}

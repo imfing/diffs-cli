@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/imfing/diffs-cli/internal/appconfig"
@@ -22,7 +23,8 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 	if err != nil {
 		return err
 	}
-	if targetPath == "/local" {
+	localGitTarget := isLocalGitTarget(targetPath)
+	if localGitTarget {
 		root, err := gitRoot(displayCWD)
 		if err != nil {
 			printLocalGitHelp(errOut, displayCWD, colorEnabled(errOut))
@@ -41,9 +43,9 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		CWD:        opts.dir,
 		GitHubHost: opts.ghHost,
 		UI:         appCfg.UI,
-		Watch:      targetPath == "/local",
+		Watch:      localGitTarget,
 	}
-	if targetPath == "/local" {
+	if localGitTarget {
 		reload := newReloadLogger(out, colorEnabled(out))
 		cfg.OnChange = func(files []server.ChangedFile) {
 			reload(time.Now(), files)
@@ -74,7 +76,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		URL:      url,
 		Target:   targetLabel(targetPath, displayCWD),
 		CWD:      displayCWD,
-		Watching: targetPath == "/local",
+		Watching: localGitTarget,
 		Elapsed:  time.Since(started),
 	}, colorEnabled(out))
 
@@ -88,4 +90,8 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		return err
 	}
 	return nil
+}
+
+func isLocalGitTarget(targetPath string) bool {
+	return targetPath == "/local" || targetPath == "/branch" || strings.HasPrefix(targetPath, "/branch?")
 }

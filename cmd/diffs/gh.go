@@ -12,7 +12,19 @@ import (
 const defaultGHTimeout = 10 * time.Second
 
 var runGHPRView = func(ctx context.Context, dir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", "pr", "view", "--json", "url", "-q", ".url")
+	return runGH(ctx, dir, "pr", "view", "--json", "url", "-q", ".url")
+}
+
+var runGHPRBaseRef = func(ctx context.Context, dir string) (string, error) {
+	return runGH(ctx, dir, "pr", "view", "--json", "baseRefName", "-q", ".baseRefName")
+}
+
+var runGHRepoDefaultBranch = func(ctx context.Context, dir string) (string, error) {
+	return runGH(ctx, dir, "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name")
+}
+
+func runGH(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

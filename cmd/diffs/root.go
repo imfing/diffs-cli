@@ -44,6 +44,7 @@ func newRootCommand(started time.Time) *cobra.Command {
 	addServeFlags(root, opts, false)
 	root.AddCommand(
 		newPRCommand(opts, started),
+		newBranchCommand(opts, started),
 		newCommentsCommand(opts),
 		newVersionCommand(),
 	)

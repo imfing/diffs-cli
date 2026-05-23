@@ -42,6 +42,7 @@ export function NotFound() {
         >
           {`/
 /local
+/branch?base=<ref>
 /:org/:repo/pull/:number`}
         </pre>
       </div>

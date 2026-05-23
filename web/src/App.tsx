@@ -9,6 +9,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/local" element={<DiffView source="local" />} />
+        <Route path="/branch" element={<DiffView source="branch" />} />
         <Route path="/:org/:repo/pull/:number" element={<DiffView />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

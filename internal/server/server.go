@@ -129,6 +129,7 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/local-diff", s.handleLocalDiff)
+	mux.HandleFunc("GET /api/branch-diff", s.handleBranchDiff)
 	mux.HandleFunc("GET /api/comments", s.handleListComments)
 	mux.HandleFunc("POST /api/comments", s.handleAddComment)
 	mux.HandleFunc("DELETE /api/comments/{threadID}", s.handleDeleteComment)
@@ -170,6 +171,25 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLocalDiff(w http.ResponseWriter, r *http.Request) {
 	patch, err := s.localDiff(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, patch)
+}
+
+func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request) {
+	base := strings.TrimSpace(r.URL.Query().Get("base"))
+	if base == "" {
+		writeError(w, http.StatusBadRequest, errors.New("base query parameter is required"))
+		return
+	}
+	if !isSafeRefArg(base) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid base ref: %q", base))
+		return
+	}
+	patch, err := s.branchDiff(r.Context(), base)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -481,6 +501,40 @@ func (s *Server) localDiff(ctx context.Context) (string, error) {
 	appendPatch(&patch, untracked)
 
 	return patch.String(), nil
+}
+
+func (s *Server) branchDiff(ctx context.Context, base string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	out, err := s.gitOutput(ctx, "git diff",
+		"diff", "--no-ext-diff", "--patch", "--submodule=diff", base+"...HEAD", "--")
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// isSafeRefArg rejects revision expressions and strings git could misinterpret
+// as flags. Branch mode accepts branch-like refs, not arbitrary revspecs.
+func isSafeRefArg(ref string) bool {
+	if ref == "" ||
+		strings.HasPrefix(ref, "-") ||
+		strings.Contains(ref, "..") ||
+		strings.Contains(ref, "~") ||
+		strings.Contains(ref, "^") ||
+		ref == "@" ||
+		strings.Contains(ref, "{") ||
+		strings.Contains(ref, "}") ||
+		strings.Contains(ref, "\\") {
+		return false
+	}
+	for _, r := range ref {
+		if r <= ' ' || r == 0x7f || r == ':' || r == '?' || r == '*' || r == '[' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) pullRequestPatch(ctx context.Context, org, repo, number string) (string, error) {

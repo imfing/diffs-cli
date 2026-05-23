@@ -96,6 +96,7 @@ export function DiffToolbar({
   showBackground,
   showLineNumbers,
   isLocal,
+  baseRef,
   onColorSchemeChange,
   onDiffStyleToggle,
   onDiffThemeChange,
@@ -123,6 +124,7 @@ export function DiffToolbar({
   showBackground: boolean;
   showLineNumbers: boolean;
   isLocal: boolean;
+  baseRef?: string;
   onColorSchemeChange: (value: AppColorScheme) => void;
   onDiffStyleToggle: () => void;
   onDiffThemeChange: (value: DiffThemeId) => void;
@@ -179,6 +181,18 @@ export function DiffToolbar({
               <GitBranch size={12} />
               <span className="truncate">{config.gitBranch.trim()}</span>
             </span>
+          )}
+          {baseRef && baseRef.trim() !== "" && (
+            <>
+              <ArrowLeft size={12} className="shrink-0 text-neutral-400 dark:text-neutral-500" />
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+                title={`Base: ${baseRef.trim()}`}
+              >
+                <GitBranch size={12} />
+                <span className="truncate">{baseRef.trim()}</span>
+              </span>
+            </>
           )}
         </div>
       ) : (

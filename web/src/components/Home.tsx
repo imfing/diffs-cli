@@ -29,9 +29,12 @@ export function Home() {
           aria-label="CLI usage"
         >
           {`diffs
-diffs local
-diffs local --host localhost --port 4321 --dir /path/to/repo
-diffs pr /org/repo/pull/123
+diffs --host localhost --port 4321 --dir /path/to/repo
+diffs branch
+diffs branch main
+diffs pr
+diffs pr 123
+diffs pr org/repo/pull/123
 diffs pr https://github.com/org/repo/pull/123
 diffs pr --gh-host ghe.example.com /org/repo/pull/123`}
         </pre>
