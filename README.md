@@ -39,7 +39,8 @@ This opens `http://127.0.0.1:3433/local` and reloads when files change.
 Review a GitHub pull request (requires the [GitHub CLI](https://cli.github.com)):
 
 ```sh
-diffs pr org/repo/pull/123
+diffs pr 123                # PR in the current repo
+diffs pr org/repo/pull/123  # PR in any repo
 ```
 
 <img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="800">
