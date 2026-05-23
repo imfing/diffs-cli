@@ -45,20 +45,27 @@ release:
     owner: imfing
     name: diffs-cli
 
-brews:
+homebrew_casks:
   - name: diffs
+    ids:
+      - diffs
+    binaries:
+      - diffs
     repository:
       owner: imfing
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
+    url:
+      verified: github.com/imfing/diffs-cli/
     homepage: "https://github.com/imfing/diffs-cli"
     description: "Fast, beautiful diffs on the Go"
-    license: "Apache-2.0"
-    install: |
-      bin.install "diffs"
-    test: |
-      assert_match "Review local diffs", shell_output("#{bin}/diffs --help")
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/diffs"]
+          end
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
