@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <style>
+    :root {
+      --icon: #334155;
+      --accent: #2563eb;
+      --muted: #94a3b8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --icon: #e2e8f0;
+        --accent: #60a5fa;
+        --muted: #94a3b8;
+      }
+    }
+  </style>
+  <path d="M0 0h16v16H0z" fill="none" />
+  <path
+    fill="var(--icon)"
+    d="M12.561 4.354L9.647 1.44a1.5 1.5 0 0 0-1.061-.439H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h7c1.103 0 2-.897 2-2V5.415c0-.395-.16-.781-.439-1.061M12 13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h4.586c.132 0 .261.054.354.146l2.914 2.914a.5.5 0 0 1 .146.354z"
+  />
+  <path
+    fill="var(--accent)"
+    d="M10 6.5a.5.5 0 0 1-.5.5H8v1.5a.5.5 0 0 1-1 0V7H5.5a.5.5 0 0 1 0-1H7V4.5a.5.5 0 0 1 1 0V6h1.5a.5.5 0 0 1 .5.5"
+  />
+  <path fill="var(--muted)" d="M10 11.5a.5.5 0 0 1-.5.5h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 1 .5.5" />
+</svg>
