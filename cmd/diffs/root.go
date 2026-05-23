@@ -43,25 +43,11 @@ func newRootCommand(started time.Time) *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.dir, "dir", opts.dir, "repository directory for local diff and comments")
 	addServeFlags(root, opts, false)
 	root.AddCommand(
-		newLocalCommand(opts, started),
 		newPRCommand(opts, started),
 		newCommentsCommand(opts),
 		newVersionCommand(),
 	)
 	return root
-}
-
-func newLocalCommand(opts *cliOptions, started time.Time) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "local",
-		Short: "Review local working tree changes",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runServerTarget(cmd, opts, "/local", started)
-		},
-	}
-	addServeFlags(cmd, opts, false)
-	return cmd
 }
 
 func newPRCommand(opts *cliOptions, started time.Time) *cobra.Command {

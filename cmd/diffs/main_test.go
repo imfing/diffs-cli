@@ -277,7 +277,6 @@ func TestUnknownCommandPrintsRootHelp(t *testing.T) {
 		"Usage:",
 		"diffs [flags]",
 		"Available Commands:",
-		"local",
 		"pr",
 		"version",
 	} {
@@ -310,7 +309,6 @@ func TestLocalCommandRejectsNonGitRepository(t *testing.T) {
 		"Usage:",
 		"diffs [flags]",
 		"Available Commands:",
-		"local",
 		"pr",
 		"--dir string",
 	} {
@@ -550,7 +548,6 @@ func TestRootCommandHelpShowsSubcommandsAndDir(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"diffs [flags]",
-		"local",
 		"pr",
 		"version",
 		"--dir string",
