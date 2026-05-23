@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/imfing/diffs-cli/internal/appconfig"
 )
 
 func TestConfigIncludesCurrentBranch(t *testing.T) {
@@ -43,11 +45,24 @@ func TestConfigIncludesCurrentBranch(t *testing.T) {
 	}
 }
 
-func TestConfigIncludesColorSchemeWhenConfigured(t *testing.T) {
+func TestConfigIncludesUISettingsWhenConfigured(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
 
-	handler, err := New(Config{CWD: dir, ColorScheme: "dark"})
+	wordWrap := true
+	lineNumbers := false
+	lineBackgrounds := true
+	handler, err := New(Config{
+		CWD: dir,
+		UI: appconfig.UIConfig{
+			ColorScheme:     "dark",
+			DiffTheme:       "github",
+			DiffStyle:       "unified",
+			WordWrap:        &wordWrap,
+			LineNumbers:     &lineNumbers,
+			LineBackgrounds: &lineBackgrounds,
+		},
+	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -59,13 +74,21 @@ func TestConfigIncludesColorSchemeWhenConfigured(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	var got struct {
-		ColorScheme string `json:"colorScheme"`
+		ColorScheme     string `json:"colorScheme"`
+		DiffTheme       string `json:"diffTheme"`
+		DiffStyle       string `json:"diffStyle"`
+		WordWrap        bool   `json:"wordWrap"`
+		LineNumbers     bool   `json:"lineNumbers"`
+		LineBackgrounds bool   `json:"lineBackgrounds"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
 	if got.ColorScheme != "dark" {
 		t.Fatalf("colorScheme = %q, want dark", got.ColorScheme)
+	}
+	if got.DiffTheme != "github" || got.DiffStyle != "unified" || !got.WordWrap || got.LineNumbers || !got.LineBackgrounds {
+		t.Fatalf("unexpected UI config: %+v", got)
 	}
 }
 
@@ -200,6 +223,141 @@ func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 	}
 }
 
+func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
+	git(t, dir, "add", ".gitignore")
+	git(t, dir, "commit", "-m", "init")
+	if err := os.MkdirAll(filepath.Join(dir, "web", "dist", "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := make(chan []string, 1)
+	handler, err := New(Config{
+		CWD: dir,
+		OnChange: func(paths []string) {
+			select {
+			case changed <- paths:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	writeFile(t, filepath.Join(dir, "web", "dist", "assets", "index.js"), "built\n")
+
+	select {
+	case paths := <-changed:
+		t.Fatalf("change callback ran for git-ignored build output: %v", paths)
+	case <-time.After(400 * time.Millisecond):
+	}
+}
+
+func TestGitChangedPaths(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
+	git(t, dir, "add", ".gitignore", "tracked.txt")
+	git(t, dir, "commit", "-m", "init")
+
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\ntwo\n")
+	writeFile(t, filepath.Join(dir, "new.txt"), "hello\n")
+	if err := os.MkdirAll(filepath.Join(dir, "web", "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "web", "dist", "bundle.js"), "built\n")
+
+	got, err := gitChangedPaths(dir)
+	if err != nil {
+		t.Fatalf("gitChangedPaths() error = %v", err)
+	}
+	want := []string{"new.txt", "tracked.txt"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("gitChangedPaths() = %v, want %v", got, want)
+	}
+}
+
+func TestLocalCommentsAPI(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	git(t, dir, "checkout", "-b", "feature/comments")
+	handler, err := New(Config{CWD: dir})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	addReq := httptest.NewRequest(http.MethodPost, "/api/local-comments", bytes.NewBufferString(`{
+		"path": "web/src/App.tsx",
+		"line": 42,
+		"side": "additions",
+		"body": "Looks odd",
+		"author": "agent"
+	}`))
+	addRec := httptest.NewRecorder()
+	handler.ServeHTTP(addRec, addReq)
+	if addRec.Code != http.StatusCreated {
+		t.Fatalf("add status = %d, body = %s", addRec.Code, addRec.Body.String())
+	}
+	var thread struct {
+		ID       string `json:"id"`
+		Branch   string `json:"branch"`
+		Path     string `json:"path"`
+		Status   string `json:"status"`
+		Comments []struct {
+			Author string `json:"author"`
+			Body   string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.NewDecoder(addRec.Body).Decode(&thread); err != nil {
+		t.Fatal(err)
+	}
+	if thread.ID == "" || thread.Branch != "feature/comments" || thread.Path != "web/src/App.tsx" || thread.Status != "open" {
+		t.Fatalf("unexpected thread: %+v", thread)
+	}
+	if len(thread.Comments) != 1 || thread.Comments[0].Author != "agent" || thread.Comments[0].Body != "Looks odd" {
+		t.Fatalf("unexpected comments: %+v", thread.Comments)
+	}
+
+	replyReq := httptest.NewRequest(http.MethodPost, "/api/local-comments/"+thread.ID+"/replies", bytes.NewBufferString(`{"body":"Agreed"}`))
+	replyRec := httptest.NewRecorder()
+	handler.ServeHTTP(replyRec, replyReq)
+	if replyRec.Code != http.StatusOK {
+		t.Fatalf("reply status = %d, body = %s", replyRec.Code, replyRec.Body.String())
+	}
+
+	resolveReq := httptest.NewRequest(http.MethodPost, "/api/local-comments/"+thread.ID+"/resolve", nil)
+	resolveRec := httptest.NewRecorder()
+	handler.ServeHTTP(resolveRec, resolveReq)
+	if resolveRec.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, body = %s", resolveRec.Code, resolveRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/local-comments", nil)
+	listRec := httptest.NewRecorder()
+	handler.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+	var list struct {
+		Threads []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"threads"`
+	}
+	if err := json.NewDecoder(listRec.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Threads) != 1 || list.Threads[0].ID != thread.ID || list.Threads[0].Status != "resolved" {
+		t.Fatalf("list = %+v, want resolved thread", list.Threads)
+	}
+}
+
 func TestLocalWatcherIgnoresChmodEvents(t *testing.T) {
 	dir := t.TempDir()
 	w := &localWatcher{cwd: dir}
@@ -217,6 +375,16 @@ func TestLocalWatcherIgnoresGitDirectory(t *testing.T) {
 
 	if !w.ignore(name) {
 		t.Fatal(".git paths should be ignored")
+	}
+}
+
+func TestLocalWatcherNormalizesCommentTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	w := &localWatcher{cwd: dir}
+	name := filepath.Join(dir, ".diffs", ".comments-123.json")
+
+	if got := w.displayName(name); got != ".diffs/comments.json" {
+		t.Fatalf("displayName() = %q, want .diffs/comments.json", got)
 	}
 }
 

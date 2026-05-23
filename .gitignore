@@ -27,6 +27,7 @@ lerna-debug.log*
 *.out
 
 # Local configuration
+.diffs/
 .env
 .env.*
 !.env.example

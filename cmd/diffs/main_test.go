@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +17,6 @@ func TestTargetPathFromArgs(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "default local", want: "/local"},
-		{name: "explicit local", args: []string{"local"}, want: "/local"},
 		{name: "path", args: []string{"/org/repo/pull/123"}, want: "/org/repo/pull/123"},
 		{name: "path without leading slash", args: []string{"org/repo/pull/123"}, want: "/org/repo/pull/123"},
 		{name: "url", args: []string{"https://github.com/org/repo/pull/123"}, want: "/org/repo/pull/123"},
@@ -36,8 +35,75 @@ func TestTargetPathFromArgs(t *testing.T) {
 }
 
 func TestTargetPathFromArgsRejectsInvalidTarget(t *testing.T) {
-	if _, err := targetPathFromArgs([]string{"org/repo/issues/123"}); err == nil {
-		t.Fatal("expected invalid target to fail")
+	tests := [][]string{
+		nil,
+		{""},
+		{"org/repo/issues/123"},
+	}
+	for _, args := range tests {
+		if _, err := targetPathFromArgs(args); err == nil {
+			t.Fatalf("targetPathFromArgs(%v) succeeded, want error", args)
+		}
+	}
+}
+
+func TestRootCommandRejectsDirectPRTarget(t *testing.T) {
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"/org/repo/pull/123"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("root command accepted direct PR target, want explicit pr subcommand")
+	}
+}
+
+func TestLocalCommandRejectsNonGitRepository(t *testing.T) {
+	dir := t.TempDir()
+	var errOut bytes.Buffer
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&errOut)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"--dir", dir, "--no-open"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("local command succeeded outside git repository")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("error = %v, want not a git repository", err)
+	}
+	got := errOut.String()
+	for _, want := range []string{
+		"error   not a git repository: " + dir,
+		"hint    run from a git repository",
+		"hint    or pass --dir /path/to/repo",
+		"hint    or use diffs pr /org/repo/pull/123",
+		"Usage:",
+		"diffs [flags]",
+		"Available Commands:",
+		"local",
+		"pr",
+		"--dir string",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("git help missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestGitRootAcceptsGitRepository(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+
+	got, err := gitRoot(dir)
+	if err != nil {
+		t.Fatalf("gitRoot() error = %v", err)
+	}
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("gitRoot() = %q, want %q", got, want)
 	}
 }
 
@@ -105,11 +171,11 @@ func TestPrintStartup(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"DIFFS ready in 12 ms",
-		"Local:   http://127.0.0.1:3433/local",
-		"Target:  feature/startup",
-		"Watch:   /repo",
-		"Press Ctrl+C to stop.",
+		"diffs   ready in 12 ms",
+		"serve   http://127.0.0.1:3433/local",
+		"target  feature/startup",
+		"watch   /repo",
+		"stop    Ctrl+C",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("printStartup() missing %q in:\n%s", want, got)
@@ -132,10 +198,13 @@ func TestPrintReload(t *testing.T) {
 	printReload(&out, time.Date(2026, 5, 23, 14, 15, 16, 0, time.Local), []string{"web/src/App.tsx"}, false)
 
 	got := out.String()
-	for _, want := range []string{"14:15:16", "[diffs]", "local change detected: web/src/App.tsx, refreshing diff"} {
+	for _, want := range []string{"change  web/src/App.tsx"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("printReload() missing %q in %q", want, got)
 		}
+	}
+	if strings.Contains(got, "14:15:16") || strings.Contains(got, "[diffs]") || strings.Contains(got, "reload") {
+		t.Fatalf("printReload() should not include timestamp, bracketed prefix, or extra reload line: %q", got)
 	}
 }
 
@@ -148,15 +217,124 @@ func TestReloadLoggerCoalescesBursts(t *testing.T) {
 	reload(now.Add(100*time.Millisecond), []string{"two.go"})
 	reload(now.Add(600*time.Millisecond), []string{"three.go"})
 
-	if got := strings.Count(out.String(), "refreshing diff"); got != 2 {
+	if got := strings.Count(out.String(), "change"); got != 2 {
 		t.Fatalf("reload log count = %d, want 2:\n%s", got, out.String())
 	}
 }
 
 func TestReloadMessageSummarizesMultiplePaths(t *testing.T) {
 	got := reloadMessage([]string{"a.go", "b.go", "c.go"}, terminalColors{}, false)
-	want := "local changes detected: a.go (+2 more), refreshing diff"
+	want := "a.go (+2 more)"
 	if got != want {
 		t.Fatalf("reloadMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestRootCommandHelpShowsSubcommandsAndDir(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("help failed: %v", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"diffs [flags]",
+		"local",
+		"pr",
+		"--dir string",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("help output missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "--github-host") {
+		t.Fatalf("root help output should not include pr-only flag --github-host:\n%s", got)
+	}
+}
+
+func TestPRCommandHelp(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"pr", "--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pr help failed: %v", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"diffs pr [github-pr-url|/org/repo/pull/123]",
+		"--host string",
+		"--port int",
+		"--dir string",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pr help output missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestCommentsCommandAddAndListJSON(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+
+	var addOut bytes.Buffer
+	addCmd := newRootCommand(time.Time{})
+	addCmd.SetOut(&addOut)
+	addCmd.SetErr(&bytes.Buffer{})
+	addCmd.SetArgs([]string{
+		"--dir", dir,
+		"comments", "--json", "add",
+		"--file", "web/src/App.tsx",
+		"--line", "42",
+		"--body", "Looks suspicious",
+		"--author", "agent",
+	})
+	if err := addCmd.Execute(); err != nil {
+		t.Fatalf("comments add failed: %v", err)
+	}
+	var added struct {
+		ID       string `json:"id"`
+		Path     string `json:"path"`
+		Line     int    `json:"line"`
+		Status   string `json:"status"`
+		Comments []struct {
+			Author string `json:"author"`
+			Body   string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(addOut.Bytes(), &added); err != nil {
+		t.Fatalf("decode add json: %v\n%s", err, addOut.String())
+	}
+	if added.ID == "" || added.Path != "web/src/App.tsx" || added.Line != 42 || added.Status != "open" {
+		t.Fatalf("unexpected added thread: %+v", added)
+	}
+	if len(added.Comments) != 1 || added.Comments[0].Author != "agent" || added.Comments[0].Body != "Looks suspicious" {
+		t.Fatalf("unexpected added comments: %+v", added.Comments)
+	}
+
+	var listOut bytes.Buffer
+	listCmd := newRootCommand(time.Time{})
+	listCmd.SetOut(&listOut)
+	listCmd.SetErr(&bytes.Buffer{})
+	listCmd.SetArgs([]string{"--dir", dir, "comments", "--json", "list"})
+	if err := listCmd.Execute(); err != nil {
+		t.Fatalf("comments list failed: %v", err)
+	}
+	var listed struct {
+		Threads []struct {
+			ID string `json:"id"`
+		} `json:"threads"`
+	}
+	if err := json.Unmarshal(listOut.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list json: %v\n%s", err, listOut.String())
+	}
+	if len(listed.Threads) != 1 || listed.Threads[0].ID != added.ID {
+		t.Fatalf("listed threads = %+v, want %s", listed.Threads, added.ID)
 	}
 }

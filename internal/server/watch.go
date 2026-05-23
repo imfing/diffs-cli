@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -192,6 +193,9 @@ func (w *localWatcher) displayName(name string) string {
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 		return filepath.ToSlash(name)
 	}
+	if strings.HasPrefix(rel, ".diffs"+string(filepath.Separator)+".comments-") && strings.HasSuffix(rel, ".json") {
+		return ".diffs/comments.json"
+	}
 	return filepath.ToSlash(rel)
 }
 
@@ -202,6 +206,40 @@ func sortedKeys(values map[string]struct{}) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+func gitChangedPaths(cwd string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	paths := make(map[string]struct{})
+	entries := strings.Split(string(out), "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
+			continue
+		}
+		status := entry[:2]
+		path := entry[3:]
+		if status[0] == 'R' || status[0] == 'C' {
+			i++
+			if i < len(entries) && entries[i] != "" {
+				path = entries[i]
+			}
+		}
+		if path == "" || skippedPathPart(cwd, filepath.FromSlash(path)) {
+			continue
+		}
+		paths[filepath.ToSlash(path)] = struct{}{}
+	}
+	return sortedKeys(paths), nil
 }
 
 func skippedPathPart(root, name string) bool {

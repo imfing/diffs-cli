@@ -17,23 +17,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imfing/diffs-cli/internal/appconfig"
+	"github.com/imfing/diffs-cli/internal/comments"
 	"github.com/imfing/diffs-cli/internal/webassets"
 )
 
 type Config struct {
-	CWD         string
-	ColorScheme string
-	GitHubHost  string
-	OnChange    func([]string)
+	CWD        string
+	GitHubHost string
+	OnChange   func([]string)
+	UI         appconfig.UIConfig
 }
 
 type Server struct {
-	colorScheme string
-	cwd         string
-	githubHost  string
-	staticFS    fs.FS
-	events      *changeBroadcaster
-	watcher     *localWatcher
+	cwd        string
+	githubHost string
+	staticFS   fs.FS
+	ui         appconfig.UIConfig
+	comments   *comments.Store
+	events     *changeBroadcaster
+	watcher    *localWatcher
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -53,6 +56,7 @@ func New(cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	commentStore, _ := comments.NewStore(absCWD)
 	events := newChangeBroadcaster()
 	notifyChange := func([]string) {
 		events.broadcast()
@@ -60,36 +64,63 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.OnChange != nil {
 		notifyChange = func(paths []string) {
 			events.broadcast()
-			cfg.OnChange(paths)
+			changed, err := gitChangedPaths(absCWD)
+			if err == nil {
+				paths = changed
+			}
+			if len(paths) > 0 {
+				cfg.OnChange(paths)
+			}
 		}
 	}
 	watcher, _ := newLocalWatcher(absCWD, notifyChange)
 	s := &Server{
-		colorScheme: strings.TrimSpace(cfg.ColorScheme),
-		cwd:         absCWD,
-		githubHost:  host,
-		staticFS:    staticFS,
-		events:      events,
-		watcher:     watcher,
+		cwd:        absCWD,
+		githubHost: host,
+		staticFS:   staticFS,
+		ui:         cleanUIConfig(cfg.UI),
+		comments:   commentStore,
+		events:     events,
+		watcher:    watcher,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/local-diff", s.handleLocalDiff)
+	mux.HandleFunc("GET /api/local-comments", s.handleListLocalComments)
+	mux.HandleFunc("POST /api/local-comments", s.handleAddLocalComment)
+	mux.HandleFunc("POST /api/local-comments/{threadID}/replies", s.handleReplyLocalComment)
+	mux.HandleFunc("POST /api/local-comments/{threadID}/resolve", s.handleResolveLocalComment)
+	mux.HandleFunc("POST /api/local-comments/{threadID}/reopen", s.handleReopenLocalComment)
 	mux.HandleFunc("GET /api/patch/{org}/{repo}/{number}", s.handlePatch)
 	mux.HandleFunc("/", s.handleStatic)
 	return mux, nil
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	config := map[string]string{
+	config := map[string]any{
 		"cwd":        s.cwd,
 		"gitBranch":  s.gitBranch(r.Context()),
 		"githubHost": s.githubHost,
 	}
-	if isColorScheme(s.colorScheme) {
-		config["colorScheme"] = s.colorScheme
+	if isColorScheme(s.ui.ColorScheme) {
+		config["colorScheme"] = s.ui.ColorScheme
+	}
+	if isDiffTheme(s.ui.DiffTheme) {
+		config["diffTheme"] = s.ui.DiffTheme
+	}
+	if isDiffStyle(s.ui.DiffStyle) {
+		config["diffStyle"] = s.ui.DiffStyle
+	}
+	if s.ui.WordWrap != nil {
+		config["wordWrap"] = *s.ui.WordWrap
+	}
+	if s.ui.LineNumbers != nil {
+		config["lineNumbers"] = *s.ui.LineNumbers
+	}
+	if s.ui.LineBackgrounds != nil {
+		config["lineBackgrounds"] = *s.ui.LineBackgrounds
 	}
 	writeJSON(w, http.StatusOK, config)
 }
@@ -102,6 +133,81 @@ func (s *Server) handleLocalDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = io.WriteString(w, patch)
+}
+
+func (s *Server) handleListLocalComments(w http.ResponseWriter, r *http.Request) {
+	if s.comments == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+		return
+	}
+	threads, err := s.comments.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"threads": threads})
+}
+
+func (s *Server) handleAddLocalComment(w http.ResponseWriter, r *http.Request) {
+	if s.comments == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+		return
+	}
+	var input comments.AddThreadInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	thread, err := s.comments.AddThread(r.Context(), input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, thread)
+}
+
+func (s *Server) handleReplyLocalComment(w http.ResponseWriter, r *http.Request) {
+	if s.comments == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+		return
+	}
+	var input comments.AddReplyInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	thread, err := s.comments.AddReply(r.Context(), r.PathValue("threadID"), input)
+	writeThreadOrError(w, thread, err)
+}
+
+func (s *Server) handleResolveLocalComment(w http.ResponseWriter, r *http.Request) {
+	if s.comments == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+		return
+	}
+	thread, err := s.comments.Resolve(r.Context(), r.PathValue("threadID"))
+	writeThreadOrError(w, thread, err)
+}
+
+func (s *Server) handleReopenLocalComment(w http.ResponseWriter, r *http.Request) {
+	if s.comments == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+		return
+	}
+	thread, err := s.comments.Reopen(r.Context(), r.PathValue("threadID"))
+	writeThreadOrError(w, thread, err)
+}
+
+func writeThreadOrError(w http.ResponseWriter, thread comments.Thread, err error) {
+	if errors.Is(err, comments.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, thread)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +452,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func readJSON(r *http.Request, v any) error {
+	defer r.Body.Close()
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	return nil
+}
+
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
@@ -361,4 +477,24 @@ func safePathPart(s string) bool {
 
 func isColorScheme(s string) bool {
 	return s == "dark" || s == "light" || s == "system"
+}
+
+func isDiffTheme(s string) bool {
+	switch s {
+	case "pierre", "github", "dark-plus", "light-plus", "one-dark-pro", "one-light", "monokai", "night-owl", "tokyo-night":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDiffStyle(s string) bool {
+	return s == "split" || s == "unified"
+}
+
+func cleanUIConfig(ui appconfig.UIConfig) appconfig.UIConfig {
+	ui.ColorScheme = strings.TrimSpace(ui.ColorScheme)
+	ui.DiffTheme = strings.TrimSpace(ui.DiffTheme)
+	ui.DiffStyle = strings.TrimSpace(ui.DiffStyle)
+	return ui
 }
