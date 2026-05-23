@@ -11,11 +11,15 @@ Fast, beautiful diffs on the Go.
 
 `diffs` is a local-first CLI in a single binary. Inspired by [DiffsHub](https://diffshub.com) from [pierre.computer](https://pierre.computer/), it brings a calmer review experience to your working tree and GitHub pull request.
 
-## Install
+## Features
 
-Download a pre-built binary from the [releases page](https://github.com/imfing/diffs-cli/releases), or build from source (see below).
+- Offline, local-first review in a single binary.
+- Fast local diff viewer with file watching and browser reloads.
+- GitHub pull request review and comment.
 
-## Usage
+## Quick start
+
+Download a pre-built binary from the [releases page](https://github.com/imfing/diffs-cli/releases), or build from source.
 
 Run from any git repository:
 
@@ -67,17 +71,19 @@ The file sets initial defaults only. Once you change a setting in the UI it is s
 
 ## Comments
 
-Review comments are stored in `.diffs/comments.json` at the repo root. The folder is git-ignored by default.
+<details>
+<summary>Experimental local comments workflow</summary>
+
+Experimental local comments support lets a human leave review notes for an agent through the CLI. Comments are stored at `.diffs/comments.json` in the target repository; keep `.diffs/` ignored so the notes stay local.
 
 ```sh
 diffs comments add --file web/src/App.tsx --line 42 --body "Check this"
 diffs comments list
-diffs comments reply <thread-id> --body "Updated"
-diffs comments resolve <thread-id>
-diffs comments reopen <thread-id>
 ```
 
-Pass `--dir /path/to/repo` to target a different repository.
+Use `reply`, `resolve`, and `reopen` to update a thread. Pass `--dir /path/to/repo` to target a different repository.
+
+</details>
 
 ## Build from source
 
