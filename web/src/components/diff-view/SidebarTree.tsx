@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { Search, FolderTree, MessageCircle, MessageCircleMore, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { ResolvedColorScheme } from "@/lib/colorScheme";
 import { CommentAvatar } from "./CommentAvatar";
 import type { ReviewThread } from "./types";
 import { latestThreadComment, threadEndLine, threadLineLabel } from "./helpers";
 import { DiffStats } from "./DiffStats";
 
 type SidebarSection = "files" | "comments";
+type FileTreeStyle = CSSProperties & Record<`--${string}`, string | number>;
 
 const fileTreeSearchCss = `
   [data-file-tree-search-container][data-open='false'] {
@@ -40,6 +42,7 @@ export function SidebarTree({
   onCommentActivate,
   onDeleteComment,
   onClose,
+  colorScheme,
 }: {
   paths: readonly string[];
   files: readonly FileDiffMetadata[];
@@ -48,6 +51,7 @@ export function SidebarTree({
   onCommentActivate: (thread: ReviewThread) => void;
   onDeleteComment: (thread: ReviewThread) => void;
   onClose?: () => void;
+  colorScheme: ResolvedColorScheme;
 }) {
   const [section, setSection] = useState<SidebarSection>("files");
   const filePathSet = useMemo(() => new Set(paths), [paths]);
@@ -115,6 +119,24 @@ export function SidebarTree({
   }, [model, gitStatus]);
 
   const search = useFileTreeSearch(model);
+  const fileTreeStyle = useMemo<FileTreeStyle>(
+    () => ({
+      height: "100%",
+      colorScheme,
+      backgroundColor: "var(--sidebar)",
+      color: "var(--sidebar-foreground)",
+      borderColor: "var(--sidebar-border)",
+      "--trees-bg-override": "var(--sidebar)",
+      "--trees-fg-override": "var(--sidebar-foreground)",
+      "--trees-fg-muted-override": "var(--muted-foreground)",
+      "--trees-bg-muted-override": "var(--muted)",
+      "--trees-border-color-override": "var(--sidebar-border)",
+      "--trees-search-bg-override": "var(--card)",
+      "--trees-selected-bg-override": "var(--accent)",
+      "--trees-selected-fg-override": "var(--accent-foreground)",
+    }),
+    [colorScheme],
+  );
 
   const CommentsIcon = openComments.length > 0 ? MessageCircleMore : MessageCircle;
 
@@ -193,7 +215,7 @@ export function SidebarTree({
 
       <div className="mt-2 min-h-0 flex-1">
         {section === "files" ? (
-          <FileTree model={model} style={{ height: "100%" }} />
+          <FileTree model={model} style={fileTreeStyle} />
         ) : (
           <div className="h-full overflow-auto px-3 pb-3">
             {commentsByPath.length === 0 ? (

@@ -13,7 +13,9 @@ import {
   initialColorScheme,
   isAppColorScheme,
   persistColorScheme,
+  resolveColorScheme,
   storedColorScheme,
+  watchSystemColorScheme,
   type AppColorScheme,
 } from "@/lib/colorScheme";
 import { ChevronRight } from "lucide-react";
@@ -125,6 +127,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
   const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(() => readStoredDiffTheme() ?? "pierre");
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
+  const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showBackground, setShowBackground] = useState(() => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true);
@@ -204,6 +207,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   useEffect(() => {
     applyColorScheme(appColorScheme);
   }, [appColorScheme]);
+
+  useEffect(() => watchSystemColorScheme(setSystemColorScheme), []);
 
   const loadComments = useCallback(() => {
     if (commentsEndpoint == null) return;
@@ -310,6 +315,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     () => diffThemeOptions.find((option) => option.id === diffThemeId) ?? diffThemeOptions[0],
     [diffThemeId],
   );
+  const resolvedAppColorScheme = appColorScheme === "system" ? systemColorScheme : appColorScheme;
   const workerPool = useWorkerPool();
   useEffect(() => {
     void workerPool?.setRenderOptions({ theme: selectedDiffTheme.theme });
@@ -561,7 +567,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const codeViewOptions = useMemo(
     () => ({
       theme: selectedDiffTheme.theme,
-      themeType: selectedDiffTheme.themeType,
+      themeType: selectedDiffTheme.themeType === "system" ? resolvedAppColorScheme : selectedDiffTheme.themeType,
       diffStyle,
       hunkSeparators: "line-info" as const,
       stickyHeaders: true,
@@ -577,6 +583,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     [
       selectedDiffTheme.theme,
       selectedDiffTheme.themeType,
+      resolvedAppColorScheme,
       diffStyle,
       showBackground,
       showLineNumbers,
@@ -654,6 +661,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     onFileActivate: scrollToFile,
     onCommentActivate: scrollToThread,
     onDeleteComment: deleteComment,
+    colorScheme: resolvedAppColorScheme,
   };
 
   return (
