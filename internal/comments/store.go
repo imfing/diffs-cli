@@ -316,26 +316,21 @@ func (s *Store) save(file File) error {
 	return os.Rename(tmpName, s.path)
 }
 
-func cleanThreadInput(path, side string, line int, endSide string, endLine int, body string) (string, string, int, string, int, string, error) {
-	return CleanThreadInput(AddThreadInput{
-		Path:    path,
-		Side:    side,
-		Line:    line,
-		EndSide: endSide,
-		EndLine: endLine,
-		Body:    body,
-	})
-}
-
 // CleanThreadInput normalizes and validates a thread before it is stored or sent remotely.
 func CleanThreadInput(input AddThreadInput) (string, string, int, string, int, string, error) {
 	path, side, line, endSide, endLine, body := input.Path, input.Side, input.Line, input.EndSide, input.EndLine, input.Body
 	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
-	path = pathpkg.Clean(path)
 	side = strings.TrimSpace(side)
 	endSide = strings.TrimSpace(endSide)
 	body = strings.TrimSpace(body)
-	if path == "" || path == "." {
+	if path == "" {
+		return "", "", 0, "", 0, "", errors.New("path is required")
+	}
+	if hasParentPathSegment(path) {
+		return "", "", 0, "", 0, "", errors.New("path must be relative to the repository")
+	}
+	path = pathpkg.Clean(path)
+	if path == "." {
 		return "", "", 0, "", 0, "", errors.New("path is required")
 	}
 	if !filepath.IsLocal(path) {
@@ -369,6 +364,15 @@ func CleanThreadInput(input AddThreadInput) (string, string, int, string, int, s
 		return "", "", 0, "", 0, "", errors.New("body is required")
 	}
 	return path, side, line, endSide, endLine, body, nil
+}
+
+func hasParentPathSegment(path string) bool {
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) cleanAuthor(ctx context.Context, author string) string {

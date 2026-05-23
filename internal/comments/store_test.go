@@ -186,7 +186,9 @@ func TestStoreRejectsInvalidThreadInput(t *testing.T) {
 	for _, input := range []AddThreadInput{
 		{Path: "", Line: 1, Body: "body"},
 		{Path: "../outside", Line: 1, Body: "body"},
+		{Path: "a/../b", Line: 1, Body: "body"},
 		{Path: "a/../../outside", Line: 1, Body: "body"},
+		{Path: `a\..\b`, Line: 1, Body: "body"},
 		{Path: `a\..\..\outside`, Line: 1, Body: "body"},
 		{Path: "a.go", Line: 0, Body: "body"},
 		{Path: "a.go", Line: 1, EndLine: -1, Body: "body"},
@@ -196,8 +198,8 @@ func TestStoreRejectsInvalidThreadInput(t *testing.T) {
 		{Path: "a.go", Line: 1, Body: ""},
 	} {
 		t.Run(input.Path, func(t *testing.T) {
-			if _, _, _, _, _, _, err := cleanThreadInput(input.Path, input.Side, input.Line, input.EndSide, input.EndLine, input.Body); err == nil {
-				t.Fatalf("cleanThreadInput(%+v) succeeded, want error", input)
+			if _, _, _, _, _, _, err := CleanThreadInput(input); err == nil {
+				t.Fatalf("CleanThreadInput(%+v) succeeded, want error", input)
 			}
 		})
 	}
