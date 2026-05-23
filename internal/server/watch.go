@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,6 +10,12 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	gitcmd "github.com/imfing/diffs-cli/internal/git"
+)
+
+const (
+	watchDebounce    = 150 * time.Millisecond
+	gitStatusTimeout = 2 * time.Second
 )
 
 type changeBroadcaster struct {
@@ -57,6 +62,20 @@ type localWatcher struct {
 	watched map[string]struct{}
 }
 
+type ChangeAction string
+
+const (
+	ChangeAdded    ChangeAction = "added"
+	ChangeModified ChangeAction = "modified"
+	ChangeDeleted  ChangeAction = "deleted"
+	ChangeRenamed  ChangeAction = "renamed"
+)
+
+type ChangedFile struct {
+	Path   string
+	Action ChangeAction
+}
+
 func newLocalWatcher(cwd string, notify func([]string)) (*localWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -84,7 +103,7 @@ func (w *localWatcher) run(notify func([]string)) {
 	schedule := func(name string) {
 		pending[w.displayName(name)] = struct{}{}
 		if timer == nil {
-			timer = time.NewTimer(150 * time.Millisecond)
+			timer = time.NewTimer(watchDebounce)
 			timerC = timer.C
 			return
 		}
@@ -94,7 +113,7 @@ func (w *localWatcher) run(notify func([]string)) {
 			default:
 			}
 		}
-		timer.Reset(150 * time.Millisecond)
+		timer.Reset(watchDebounce)
 	}
 
 	for {
@@ -147,7 +166,7 @@ func (w *localWatcher) addCreatedDir(name string) {
 func (w *localWatcher) addDirRecursive(root string) error {
 	return filepath.WalkDir(root, func(name string, entry os.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if !entry.IsDir() {
 			return nil
@@ -155,8 +174,7 @@ func (w *localWatcher) addDirRecursive(root string) error {
 		if w.skipDir(name) {
 			return filepath.SkipDir
 		}
-		_ = w.addDir(name)
-		return nil
+		return w.addDir(name)
 	})
 }
 
@@ -178,6 +196,9 @@ func (w *localWatcher) addDir(name string) error {
 }
 
 func (w *localWatcher) ignore(name string) bool {
+	if w.isCommentTempFile(name) {
+		return true
+	}
 	return skippedPathPart(w.cwd, name)
 }
 
@@ -193,10 +214,15 @@ func (w *localWatcher) displayName(name string) string {
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 		return filepath.ToSlash(name)
 	}
-	if strings.HasPrefix(rel, ".diffs"+string(filepath.Separator)+".comments-") && strings.HasSuffix(rel, ".json") {
-		return ".diffs/comments.json"
-	}
 	return filepath.ToSlash(rel)
+}
+
+func (w *localWatcher) isCommentTempFile(name string) bool {
+	rel, err := filepath.Rel(w.cwd, name)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(rel, ".diffs"+string(filepath.Separator)+".comments-") && strings.HasSuffix(rel, ".json")
 }
 
 func sortedKeys(values map[string]struct{}) []string {
@@ -208,18 +234,15 @@ func sortedKeys(values map[string]struct{}) []string {
 	return paths
 }
 
-func gitChangedPaths(cwd string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func gitStatus(cwd string) (map[string]ChangeAction, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-	out, err := cmd.Output()
+	out, err := gitcmd.Run(ctx, cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
-	paths := make(map[string]struct{})
+	statusByPath := make(map[string]ChangeAction)
 	entries := strings.Split(string(out), "\x00")
 	for i := 0; i < len(entries); i++ {
 		entry := entries[i]
@@ -229,17 +252,86 @@ func gitChangedPaths(cwd string) ([]string, error) {
 		status := entry[:2]
 		path := entry[3:]
 		if status[0] == 'R' || status[0] == 'C' {
+			// With porcelain -z, rename/copy records are "XY new\0old\0".
+			// Keep the new path as the status key and only consume the old path.
 			i++
-			if i < len(entries) && entries[i] != "" {
-				path = entries[i]
+			if i >= len(entries) {
+				continue
 			}
 		}
 		if path == "" || skippedPathPart(cwd, filepath.FromSlash(path)) {
 			continue
 		}
-		paths[filepath.ToSlash(path)] = struct{}{}
+		statusByPath[filepath.ToSlash(path)] = gitStatusAction(status)
 	}
-	return sortedKeys(paths), nil
+	return statusByPath, nil
+}
+
+func changedFilesForEvents(events []string, statusByPath map[string]ChangeAction) []ChangedFile {
+	if len(events) == 0 || len(statusByPath) == 0 {
+		return nil
+	}
+	matches := make(map[string]ChangedFile)
+	for _, eventPath := range events {
+		eventPath = cleanEventPath(eventPath)
+		if eventPath == "" {
+			continue
+		}
+		if action, ok := statusByPath[eventPath]; ok {
+			matches[eventPath] = ChangedFile{Path: eventPath, Action: action}
+			continue
+		}
+		prefix := eventPath + "/"
+		for path, action := range statusByPath {
+			if strings.HasPrefix(path, prefix) {
+				matches[path] = ChangedFile{Path: path, Action: action}
+			}
+		}
+	}
+	return sortedChangedFiles(matches)
+}
+
+func changedFilesFromEvents(events []string) []ChangedFile {
+	files := make(map[string]ChangedFile)
+	for _, path := range events {
+		path = cleanEventPath(path)
+		if path == "" {
+			continue
+		}
+		files[path] = ChangedFile{Path: path, Action: ChangeModified}
+	}
+	return sortedChangedFiles(files)
+}
+
+func cleanEventPath(path string) string {
+	return strings.Trim(filepath.ToSlash(path), "/")
+}
+
+func gitStatusAction(status string) ChangeAction {
+	if strings.Contains(status, "D") {
+		return ChangeDeleted
+	}
+	if strings.ContainsAny(status, "RC") {
+		return ChangeRenamed
+	}
+	if strings.Contains(status, "A") || status == "??" {
+		return ChangeAdded
+	}
+	return ChangeModified
+}
+
+func sortedChangedFiles(values map[string]ChangedFile) []ChangedFile {
+	paths := make([]string, 0, len(values))
+	for path := range values {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	files := make([]ChangedFile, 0, len(paths))
+	for _, path := range paths {
+		files = append(files, values[path])
+	}
+	return files
 }
 
 func skippedPathPart(root, name string) bool {

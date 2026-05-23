@@ -42,11 +42,12 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		CWD:        opts.dir,
 		GitHubHost: opts.githubHost,
 		UI:         appCfg.UI,
+		Watch:      targetPath == "/local",
 	}
 	if targetPath == "/local" {
 		reload := newReloadLogger(out, colorEnabled())
-		cfg.OnChange = func(paths []string) {
-			reload(time.Now(), paths)
+		cfg.OnChange = func(files []server.ChangedFile) {
+			reload(time.Now(), files)
 		}
 	}
 	handler, err := server.New(cfg)
@@ -77,7 +78,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 
 	if !opts.noOpen {
 		if err := openBrowser(url); err != nil {
-			fmt.Fprintf(errOut, "warning: could not open browser: %v\n", err)
+			_, _ = fmt.Fprintf(errOut, "warning: could not open browser: %v\n", err)
 		}
 	}
 

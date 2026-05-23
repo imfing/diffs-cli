@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/imfing/diffs-cli/internal/comments"
+	"github.com/imfing/diffs-cli/internal/server"
 )
 
 func TestTargetPathFromArgs(t *testing.T) {
@@ -73,10 +77,10 @@ func TestLocalCommandRejectsNonGitRepository(t *testing.T) {
 	}
 	got := errOut.String()
 	for _, want := range []string{
-		"error   not a git repository: " + dir,
-		"hint    run from a git repository",
-		"hint    or pass --dir /path/to/repo",
-		"hint    or use diffs pr /org/repo/pull/123",
+		"error    not a git repository: " + dir,
+		"hint     run from a git repository",
+		"hint     or pass --dir /path/to/repo",
+		"hint     or use diffs pr /org/repo/pull/123",
 		"Usage:",
 		"diffs [flags]",
 		"Available Commands:",
@@ -171,11 +175,11 @@ func TestPrintStartup(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"diffs   ready in 12 ms",
-		"serve   http://127.0.0.1:3433/local",
-		"target  feature/startup",
-		"watch   /repo",
-		"stop    Ctrl+C",
+		"diffs    ready in 12 ms",
+		"serve    http://127.0.0.1:3433/local",
+		"target   feature/startup",
+		"watch    /repo",
+		"stop     Ctrl+C",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("printStartup() missing %q in:\n%s", want, got)
@@ -195,15 +199,18 @@ func git(t *testing.T, dir string, args ...string) {
 
 func TestPrintReload(t *testing.T) {
 	var out bytes.Buffer
-	printReload(&out, time.Date(2026, 5, 23, 14, 15, 16, 0, time.Local), []string{"web/src/App.tsx"}, false)
+	printReload(&out, time.Date(2026, 5, 23, 14, 15, 16, 0, time.Local), []server.ChangedFile{{Action: server.ChangeModified, Path: "web/src/App.tsx"}}, false)
 
 	got := out.String()
-	for _, want := range []string{"change  web/src/App.tsx"} {
+	for _, want := range []string{"modified web/src/App.tsx"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("printReload() missing %q in %q", want, got)
 		}
 	}
-	if strings.Contains(got, "14:15:16") || strings.Contains(got, "[diffs]") || strings.Contains(got, "reload") {
+	if strings.Contains(got, "(+") || strings.Contains(got, " -") {
+		t.Fatalf("printReload() should not include line stats: %q", got)
+	}
+	if strings.Contains(got, "14:15:16") || strings.Contains(got, "[diffs]") || strings.Contains(got, "reload") || strings.Contains(got, "change") {
 		t.Fatalf("printReload() should not include timestamp, bracketed prefix, or extra reload line: %q", got)
 	}
 }
@@ -213,20 +220,59 @@ func TestReloadLoggerCoalescesBursts(t *testing.T) {
 	reload := newReloadLogger(&out, false)
 	now := time.Date(2026, 5, 23, 14, 15, 16, 0, time.Local)
 
-	reload(now, []string{"one.go"})
-	reload(now.Add(100*time.Millisecond), []string{"two.go"})
-	reload(now.Add(600*time.Millisecond), []string{"three.go"})
+	reload(now, []server.ChangedFile{{Action: server.ChangeModified, Path: "one.go"}})
+	reload(now.Add(100*time.Millisecond), []server.ChangedFile{{Action: server.ChangeModified, Path: "two.go"}})
+	reload(now.Add(600*time.Millisecond), []server.ChangedFile{{Action: server.ChangeModified, Path: "three.go"}})
 
-	if got := strings.Count(out.String(), "change"); got != 2 {
+	if got := strings.Count(out.String(), "modified"); got != 2 {
 		t.Fatalf("reload log count = %d, want 2:\n%s", got, out.String())
 	}
 }
 
-func TestReloadMessageSummarizesMultiplePaths(t *testing.T) {
-	got := reloadMessage([]string{"a.go", "b.go", "c.go"}, terminalColors{}, false)
+func TestReloadLineSummarizesMultiplePaths(t *testing.T) {
+	label, message := reloadLine([]server.ChangedFile{
+		{Action: server.ChangeAdded, Path: "a.go"},
+		{Action: server.ChangeModified, Path: "b.go"},
+		{Action: server.ChangeDeleted, Path: "c.go"},
+	}, terminalColors{}, false)
+	if label != "added" || message != "a.go (+2 more)" {
+		t.Fatalf("reloadLine() = %q, %q; want added, a.go (+2 more)", label, message)
+	}
+}
+
+func TestReloadLineColorsPath(t *testing.T) {
+	c := terminalColors{cyan: "C", reset: "Z"}
+	label, message := reloadLine([]server.ChangedFile{
+		{Action: server.ChangeModified, Path: "a.go"},
+	}, c, true)
+	want := "Ca.goZ"
+	if label != "modified" || message != want {
+		t.Fatalf("reloadLine() = %q, %q; want modified, %q", label, message, want)
+	}
+}
+
+func TestReloadLineFallsBackToChangeLabel(t *testing.T) {
+	label, message := reloadLine([]server.ChangedFile{
+		{Path: "a.go"},
+		{Path: "b.go"},
+		{Path: "c.go"},
+	}, terminalColors{}, false)
 	want := "a.go (+2 more)"
-	if got != want {
-		t.Fatalf("reloadMessage() = %q, want %q", got, want)
+	if label != "change" || message != want {
+		t.Fatalf("reloadLine() = %q, %q; want change, %q", label, message, want)
+	}
+}
+
+func TestLatestCommentBodyTruncatesUTF8Safely(t *testing.T) {
+	body := strings.Repeat("评", 80) + " done"
+	got := latestCommentBody(comments.Thread{
+		Comments: []comments.Comment{{Body: body}},
+	})
+	if !utf8.ValidString(got) {
+		t.Fatalf("latestCommentBody() returned invalid UTF-8: %q", got)
+	}
+	if strings.Count(got, "评") != 69 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("latestCommentBody() = %q, want 69 runes plus ellipsis", got)
 	}
 }
 

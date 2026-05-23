@@ -57,3 +57,26 @@ func TestLoadInvalidConfigReturnsError(t *testing.T) {
 		t.Fatal("Load() succeeded, want error")
 	}
 }
+
+func TestNormalizeUIConfigTrimsStringSettings(t *testing.T) {
+	got := NormalizeUIConfig(UIConfig{
+		ColorScheme: " dark ",
+		DiffTheme:   " github ",
+		DiffStyle:   " unified ",
+	})
+	if got.ColorScheme != ColorSchemeDark || got.DiffTheme != DiffThemeGitHub || got.DiffStyle != DiffStyleUnified {
+		t.Fatalf("NormalizeUIConfig() = %+v", got)
+	}
+}
+
+func TestUIOptionValidation(t *testing.T) {
+	if !IsColorScheme(ColorSchemeSystem) || IsColorScheme("auto") {
+		t.Fatal("unexpected color scheme validation")
+	}
+	if !IsDiffTheme(DiffThemePierre) || IsDiffTheme("missing") {
+		t.Fatal("unexpected diff theme validation")
+	}
+	if !IsDiffStyle(DiffStyleSplit) || IsDiffStyle("side-by-side") {
+		t.Fatal("unexpected diff style validation")
+	}
+}

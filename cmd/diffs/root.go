@@ -5,7 +5,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imfing/diffs-cli/internal/server"
 	"github.com/spf13/cobra"
+)
+
+const (
+	defaultHost = "127.0.0.1"
+	defaultPort = 3433
+	defaultDir  = "."
 )
 
 type cliOptions struct {
@@ -18,10 +25,10 @@ type cliOptions struct {
 
 func newRootCommand(started time.Time) *cobra.Command {
 	opts := &cliOptions{
-		host:       "127.0.0.1",
-		port:       3433,
+		host:       defaultHost,
+		port:       defaultPort,
 		githubHost: defaultGithubHost(),
-		dir:        ".",
+		dir:        defaultDir,
 	}
 	root := &cobra.Command{
 		Use:           "diffs [flags]",
@@ -86,5 +93,5 @@ func defaultGithubHost() string {
 	if host := strings.TrimSpace(os.Getenv("GH_HOST")); host != "" {
 		return host
 	}
-	return "github.com"
+	return server.DefaultGitHubHost
 }

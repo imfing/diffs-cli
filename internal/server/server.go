@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -19,14 +18,21 @@ import (
 
 	"github.com/imfing/diffs-cli/internal/appconfig"
 	"github.com/imfing/diffs-cli/internal/comments"
+	gitcmd "github.com/imfing/diffs-cli/internal/git"
 	"github.com/imfing/diffs-cli/internal/webassets"
+)
+
+const (
+	DefaultGitHubHost = "github.com"
+	gitDevNull        = "/dev/null"
 )
 
 type Config struct {
 	CWD        string
 	GitHubHost string
-	OnChange   func([]string)
+	OnChange   func([]ChangedFile)
 	UI         appconfig.UIConfig
+	Watch      bool
 }
 
 type Server struct {
@@ -37,6 +43,23 @@ type Server struct {
 	comments   *comments.Store
 	events     *changeBroadcaster
 	watcher    *localWatcher
+}
+
+type configResponse struct {
+	CWD             string `json:"cwd"`
+	GitBranch       string `json:"gitBranch"`
+	GitHubHost      string `json:"githubHost"`
+	ColorScheme     string `json:"colorScheme,omitempty"`
+	DiffTheme       string `json:"diffTheme,omitempty"`
+	DiffStyle       string `json:"diffStyle,omitempty"`
+	WordWrap        *bool  `json:"wordWrap,omitempty"`
+	LineNumbers     *bool  `json:"lineNumbers,omitempty"`
+	LineBackgrounds *bool  `json:"lineBackgrounds,omitempty"`
+}
+
+type gitCommandSpec struct {
+	label string
+	args  []string
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -50,35 +73,46 @@ func New(cfg Config) (http.Handler, error) {
 	}
 	host := strings.TrimSpace(cfg.GitHubHost)
 	if host == "" {
-		host = "github.com"
+		host = DefaultGitHubHost
 	}
+	ui := appconfig.NormalizeUIConfig(cfg.UI)
 	staticFS, err := webassets.DistFS()
 	if err != nil {
 		return nil, err
 	}
-	commentStore, _ := comments.NewStore(absCWD)
-	events := newChangeBroadcaster()
-	notifyChange := func([]string) {
-		events.broadcast()
+	commentStore, commentErr := comments.NewStore(absCWD)
+	if cfg.Watch && commentErr != nil {
+		return nil, commentErr
 	}
-	if cfg.OnChange != nil {
-		notifyChange = func(paths []string) {
-			events.broadcast()
-			changed, err := gitChangedPaths(absCWD)
-			if err == nil {
-				paths = changed
-			}
-			if len(paths) > 0 {
-				cfg.OnChange(paths)
-			}
+	events := newChangeBroadcaster()
+	notifyChange := func(paths []string) {
+		status, err := gitStatus(absCWD)
+		var changed []ChangedFile
+		if err == nil {
+			changed = changedFilesForEvents(paths, status)
+		} else {
+			changed = changedFilesFromEvents(paths)
+		}
+		if len(changed) == 0 {
+			return
+		}
+		events.broadcast()
+		if cfg.OnChange != nil {
+			cfg.OnChange(changed)
 		}
 	}
-	watcher, _ := newLocalWatcher(absCWD, notifyChange)
+	var watcher *localWatcher
+	if cfg.Watch {
+		watcher, err = newLocalWatcher(absCWD, notifyChange)
+		if err != nil {
+			return nil, err
+		}
+	}
 	s := &Server{
 		cwd:        absCWD,
 		githubHost: host,
 		staticFS:   staticFS,
-		ui:         cleanUIConfig(cfg.UI),
+		ui:         ui,
 		comments:   commentStore,
 		events:     events,
 		watcher:    watcher,
@@ -99,28 +133,28 @@ func New(cfg Config) (http.Handler, error) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	config := map[string]any{
-		"cwd":        s.cwd,
-		"gitBranch":  s.gitBranch(r.Context()),
-		"githubHost": s.githubHost,
+	config := configResponse{
+		CWD:        s.cwd,
+		GitBranch:  s.gitBranch(r.Context()),
+		GitHubHost: s.githubHost,
 	}
-	if isColorScheme(s.ui.ColorScheme) {
-		config["colorScheme"] = s.ui.ColorScheme
+	if appconfig.IsColorScheme(s.ui.ColorScheme) {
+		config.ColorScheme = s.ui.ColorScheme
 	}
-	if isDiffTheme(s.ui.DiffTheme) {
-		config["diffTheme"] = s.ui.DiffTheme
+	if appconfig.IsDiffTheme(s.ui.DiffTheme) {
+		config.DiffTheme = s.ui.DiffTheme
 	}
-	if isDiffStyle(s.ui.DiffStyle) {
-		config["diffStyle"] = s.ui.DiffStyle
+	if appconfig.IsDiffStyle(s.ui.DiffStyle) {
+		config.DiffStyle = s.ui.DiffStyle
 	}
 	if s.ui.WordWrap != nil {
-		config["wordWrap"] = *s.ui.WordWrap
+		config.WordWrap = s.ui.WordWrap
 	}
 	if s.ui.LineNumbers != nil {
-		config["lineNumbers"] = *s.ui.LineNumbers
+		config.LineNumbers = s.ui.LineNumbers
 	}
 	if s.ui.LineBackgrounds != nil {
-		config["lineBackgrounds"] = *s.ui.LineBackgrounds
+		config.LineBackgrounds = s.ui.LineBackgrounds
 	}
 	writeJSON(w, http.StatusOK, config)
 }
@@ -136,11 +170,11 @@ func (s *Server) handleLocalDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListLocalComments(w http.ResponseWriter, r *http.Request) {
-	if s.comments == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+	store, ok := s.requireComments(w)
+	if !ok {
 		return
 	}
-	threads, err := s.comments.List(r.Context())
+	threads, err := store.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -149,8 +183,8 @@ func (s *Server) handleListLocalComments(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAddLocalComment(w http.ResponseWriter, r *http.Request) {
-	if s.comments == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+	store, ok := s.requireComments(w)
+	if !ok {
 		return
 	}
 	var input comments.AddThreadInput
@@ -158,7 +192,7 @@ func (s *Server) handleAddLocalComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	thread, err := s.comments.AddThread(r.Context(), input)
+	thread, err := store.AddThread(r.Context(), input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -167,8 +201,8 @@ func (s *Server) handleAddLocalComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReplyLocalComment(w http.ResponseWriter, r *http.Request) {
-	if s.comments == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+	store, ok := s.requireComments(w)
+	if !ok {
 		return
 	}
 	var input comments.AddReplyInput
@@ -176,26 +210,34 @@ func (s *Server) handleReplyLocalComment(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	thread, err := s.comments.AddReply(r.Context(), r.PathValue("threadID"), input)
+	thread, err := store.AddReply(r.Context(), r.PathValue("threadID"), input)
 	writeThreadOrError(w, thread, err)
 }
 
 func (s *Server) handleResolveLocalComment(w http.ResponseWriter, r *http.Request) {
-	if s.comments == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+	store, ok := s.requireComments(w)
+	if !ok {
 		return
 	}
-	thread, err := s.comments.Resolve(r.Context(), r.PathValue("threadID"))
+	thread, err := store.Resolve(r.Context(), r.PathValue("threadID"))
 	writeThreadOrError(w, thread, err)
 }
 
 func (s *Server) handleReopenLocalComment(w http.ResponseWriter, r *http.Request) {
-	if s.comments == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+	store, ok := s.requireComments(w)
+	if !ok {
 		return
 	}
-	thread, err := s.comments.Reopen(r.Context(), r.PathValue("threadID"))
+	thread, err := store.Reopen(r.Context(), r.PathValue("threadID"))
 	writeThreadOrError(w, thread, err)
+}
+
+func (s *Server) requireComments(w http.ResponseWriter) (*comments.Store, bool) {
+	if s.comments == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("local comments require a git repository"))
+		return nil, false
+	}
+	return s.comments, true
 }
 
 func writeThreadOrError(w http.ResponseWriter, thread comments.Thread, err error) {
@@ -271,8 +313,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		serveIndex(w, r, s.staticFS)
 		return
 	}
-	if f, err := s.staticFS.Open(cleanPath); err == nil {
-		_ = f.Close()
+	if _, err := fs.Stat(s.staticFS, cleanPath); err == nil {
 		http.FileServerFS(s.staticFS).ServeHTTP(w, r)
 		return
 	}
@@ -286,24 +327,30 @@ func (s *Server) localDiff(ctx context.Context) (string, error) {
 	hasHead := s.gitOK(ctx, "rev-parse", "--verify", "HEAD")
 	var patch strings.Builder
 
+	commands := []gitCommandSpec{}
 	if hasHead {
-		out, err := s.gitOutput(ctx, "git diff", "diff", "--no-ext-diff", "--patch", "--submodule=diff", "HEAD", "--")
+		commands = append(commands, gitCommandSpec{
+			label: "git diff",
+			args:  []string{"diff", "--no-ext-diff", "--patch", "--submodule=diff", "HEAD", "--"},
+		})
+	} else {
+		commands = append(commands,
+			gitCommandSpec{
+				label: "git diff --cached",
+				args:  []string{"diff", "--no-ext-diff", "--patch", "--submodule=diff", "--cached", "--"},
+			},
+			gitCommandSpec{
+				label: "git diff",
+				args:  []string{"diff", "--no-ext-diff", "--patch", "--submodule=diff", "--"},
+			},
+		)
+	}
+	for _, command := range commands {
+		out, err := s.gitOutput(ctx, command.label, command.args...)
 		if err != nil {
 			return "", err
 		}
 		appendPatch(&patch, out)
-	} else {
-		cached, err := s.gitOutput(ctx, "git diff --cached", "diff", "--no-ext-diff", "--patch", "--submodule=diff", "--cached", "--")
-		if err != nil {
-			return "", err
-		}
-		appendPatch(&patch, cached)
-
-		unstaged, err := s.gitOutput(ctx, "git diff", "diff", "--no-ext-diff", "--patch", "--submodule=diff", "--")
-		if err != nil {
-			return "", err
-		}
-		appendPatch(&patch, unstaged)
 	}
 
 	untracked, err := s.untrackedPatch(ctx)
@@ -331,7 +378,7 @@ func (s *Server) pullRequestPatch(ctx context.Context, org, repo, number string)
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", commandError("gh api", err, cmd)
+		return "", commandError("gh api", err, cmd, "")
 	}
 	return string(out), nil
 }
@@ -357,61 +404,47 @@ func (s *Server) untrackedPatch(ctx context.Context) (string, error) {
 }
 
 func (s *Server) gitDiffNoIndex(ctx context.Context, name string) (string, error) {
-	cmd := s.gitCommand(ctx, "diff", "--no-ext-diff", "--patch", "--no-index", "--", "/dev/null", name)
-	out, err := cmd.CombinedOutput()
+	cmd := s.gitCommand(ctx, "diff", "--no-ext-diff", "--patch", "--no-index", "--", gitDevNull, name)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err == nil {
-		return string(out), nil
+		return stdout.String(), nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return string(out), nil
+		return stdout.String(), nil
 	}
-	return "", commandError("git diff --no-index", err, cmd)
+	return "", commandError("git diff --no-index", err, cmd, stderr.String())
 }
 
 func (s *Server) gitOK(ctx context.Context, args ...string) bool {
-	cmd := s.gitCommand(ctx, args...)
-	return cmd.Run() == nil
+	return gitcmd.OK(ctx, s.cwd, args...)
 }
 
 func (s *Server) gitBranch(ctx context.Context) string {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, gitcmd.DefaultTimeout)
 	defer cancel()
-
-	branch, err := s.gitOutput(ctx, "git branch --show-current", "branch", "--show-current")
-	if err == nil && strings.TrimSpace(branch) != "" {
-		return strings.TrimSpace(branch)
-	}
-
-	commit, err := s.gitOutput(ctx, "git rev-parse --short HEAD", "rev-parse", "--short", "HEAD")
-	if err == nil {
-		return strings.TrimSpace(commit)
-	}
-	return ""
+	return gitcmd.Branch(ctx, s.cwd)
 }
 
 func (s *Server) gitOutput(ctx context.Context, label string, args ...string) (string, error) {
 	cmd := s.gitCommand(ctx, args...)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", commandError(label, err, cmd)
+		return "", commandError(label, err, cmd, "")
 	}
 	return string(out), nil
 }
 
 func (s *Server) gitCommand(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = s.cwd
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-	return cmd
+	return gitcmd.Command(ctx, s.cwd, args...)
 }
 
 func appendPatch(b *strings.Builder, patch string) {
 	if patch == "" {
 		return
-	}
-	if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-		b.WriteByte('\n')
 	}
 	b.WriteString(patch)
 	if !strings.HasSuffix(patch, "\n") {
@@ -419,9 +452,12 @@ func appendPatch(b *strings.Builder, patch string) {
 	}
 }
 
-func commandError(label string, err error, cmd *exec.Cmd) error {
+func commandError(label string, err error, cmd *exec.Cmd, stderr string) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%s timed out", label)
+	}
+	if stderr = strings.TrimSpace(stderr); stderr != "" {
+		return fmt.Errorf("%s failed: %s", label, stderr)
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
@@ -453,7 +489,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func readJSON(r *http.Request, v any) error {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -467,34 +503,11 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 var pullNumber = regexp.MustCompile(`^[1-9][0-9]*$`)
+var safePathPartPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func safePathPart(s string) bool {
-	if s == "" || strings.Contains(s, "..") || strings.ContainsAny(s, `/\`) {
+	if s == "" || strings.HasPrefix(s, "-") || strings.Contains(s, "..") || strings.ContainsAny(s, `/\`) {
 		return false
 	}
-	return true
-}
-
-func isColorScheme(s string) bool {
-	return s == "dark" || s == "light" || s == "system"
-}
-
-func isDiffTheme(s string) bool {
-	switch s {
-	case "pierre", "github", "dark-plus", "light-plus", "one-dark-pro", "one-light", "monokai", "night-owl", "tokyo-night":
-		return true
-	default:
-		return false
-	}
-}
-
-func isDiffStyle(s string) bool {
-	return s == "split" || s == "unified"
-}
-
-func cleanUIConfig(ui appconfig.UIConfig) appconfig.UIConfig {
-	ui.ColorScheme = strings.TrimSpace(ui.ColorScheme)
-	ui.DiffTheme = strings.TrimSpace(ui.DiffTheme)
-	ui.DiffStyle = strings.TrimSpace(ui.DiffStyle)
-	return ui
+	return safePathPartPattern.MatchString(s)
 }

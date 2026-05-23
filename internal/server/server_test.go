@@ -114,6 +114,19 @@ func TestLocalDiffIncludesUntrackedFilesInUnbornRepo(t *testing.T) {
 	}
 }
 
+func TestGitDiffNoIndexUsesDevNullHeader(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "new.txt"), "hello\n")
+
+	patch, err := (&Server{cwd: dir}).gitDiffNoIndex(context.Background(), "new.txt")
+	if err != nil {
+		t.Fatalf("gitDiffNoIndex() error = %v", err)
+	}
+	if !strings.Contains(patch, "--- /dev/null") {
+		t.Fatalf("gitDiffNoIndex() patch missing /dev/null header:\n%s", patch)
+	}
+}
+
 func TestLocalDiffIncludesStagedAndUnstagedTrackedChanges(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
@@ -146,7 +159,7 @@ func TestEventsStreamOnLocalFileChange(t *testing.T) {
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
 
-	handler, err := New(Config{CWD: dir})
+	handler, err := New(Config{CWD: dir, Watch: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -161,7 +174,7 @@ func TestEventsStreamOnLocalFileChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", got)
 	}
@@ -195,10 +208,11 @@ func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
 
-	changed := make(chan []string, 1)
+	changed := make(chan []ChangedFile, 1)
 	handler, err := New(Config{
-		CWD: dir,
-		OnChange: func(paths []string) {
+		CWD:   dir,
+		Watch: true,
+		OnChange: func(paths []ChangedFile) {
 			select {
 			case changed <- paths:
 			default:
@@ -215,8 +229,9 @@ func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 
 	select {
 	case paths := <-changed:
-		if len(paths) != 1 || paths[0] != "tracked.txt" {
-			t.Fatalf("change paths = %v, want [tracked.txt]", paths)
+		want := []ChangedFile{{Path: "tracked.txt", Action: ChangeModified}}
+		if len(paths) != len(want) || paths[0] != want[0] {
+			t.Fatalf("change paths = %+v, want %+v", paths, want)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for change callback")
@@ -229,14 +244,16 @@ func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	git(t, dir, "add", ".gitignore")
 	git(t, dir, "commit", "-m", "init")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n*.log\n")
 	if err := os.MkdirAll(filepath.Join(dir, "web", "dist", "assets"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	changed := make(chan []string, 1)
+	changed := make(chan []ChangedFile, 1)
 	handler, err := New(Config{
-		CWD: dir,
-		OnChange: func(paths []string) {
+		CWD:   dir,
+		Watch: true,
+		OnChange: func(paths []ChangedFile) {
 			select {
 			case changed <- paths:
 			default:
@@ -258,7 +275,85 @@ func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
 	}
 }
 
-func TestGitChangedPaths(t *testing.T) {
+func TestEventsStreamIgnoresGitCleanBuildOutput(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
+	git(t, dir, "add", ".gitignore")
+	git(t, dir, "commit", "-m", "init")
+	if err := os.MkdirAll(filepath.Join(dir, "web", "dist", "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	handler, err := New(Config{CWD: dir, Watch: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	seen := make(chan struct{}, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.TrimSpace(scanner.Text()) == "event: diff" {
+				seen <- struct{}{}
+				return
+			}
+		}
+	}()
+
+	writeFile(t, filepath.Join(dir, "web", "dist", "assets", "index.js"), "built\n")
+
+	select {
+	case <-seen:
+		t.Fatal("received diff event for git-ignored build output")
+	case <-time.After(400 * time.Millisecond):
+	}
+}
+
+func TestWatcherDisabledDoesNotObserveLocalChanges(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
+	git(t, dir, "add", "tracked.txt")
+	git(t, dir, "commit", "-m", "init")
+
+	changed := make(chan []ChangedFile, 1)
+	handler, err := New(Config{
+		CWD: dir,
+		OnChange: func(paths []ChangedFile) {
+			changed <- paths
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\ntwo\n")
+
+	select {
+	case paths := <-changed:
+		t.Fatalf("change callback ran with watcher disabled: %v", paths)
+	case <-time.After(400 * time.Millisecond):
+	}
+}
+
+func TestGitStatusReturnsChangedPaths(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
@@ -273,13 +368,107 @@ func TestGitChangedPaths(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "web", "dist", "bundle.js"), "built\n")
 
-	got, err := gitChangedPaths(dir)
+	got, err := gitStatus(dir)
 	if err != nil {
-		t.Fatalf("gitChangedPaths() error = %v", err)
+		t.Fatalf("gitStatus() error = %v", err)
 	}
-	want := []string{"new.txt", "tracked.txt"}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("gitChangedPaths() = %v, want %v", got, want)
+	want := map[string]ChangeAction{
+		"new.txt":     ChangeAdded,
+		"tracked.txt": ChangeModified,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("gitStatus() = %+v, want %+v", got, want)
+	}
+	for path, action := range want {
+		if got[path] != action {
+			t.Fatalf("gitStatus()[%q] = %q, want %q", path, got[path], action)
+		}
+	}
+}
+
+func TestGitStatusActions(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
+	git(t, dir, "add", "tracked.txt")
+	git(t, dir, "commit", "-m", "init")
+
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\ntwo\n")
+	writeFile(t, filepath.Join(dir, "new.txt"), "hello\n")
+	if err := os.Remove(filepath.Join(dir, "tracked.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := gitStatus(dir)
+	if err != nil {
+		t.Fatalf("gitStatus() error = %v", err)
+	}
+	want := map[string]ChangeAction{
+		"new.txt":     ChangeAdded,
+		"tracked.txt": ChangeDeleted,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("gitStatus() = %+v, want %+v", got, want)
+	}
+	for path, action := range want {
+		if got[path] != action {
+			t.Fatalf("gitStatus()[%q] = %q, want %q", path, got[path], action)
+		}
+	}
+}
+
+func TestGitStatusUsesNewPathForRenames(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
+	writeFile(t, filepath.Join(dir, "old.txt"), "one\n")
+	git(t, dir, "add", "old.txt")
+	git(t, dir, "commit", "-m", "init")
+	git(t, dir, "mv", "old.txt", "new.txt")
+
+	got, err := gitStatus(dir)
+	if err != nil {
+		t.Fatalf("gitStatus() error = %v", err)
+	}
+	if got["new.txt"] != ChangeRenamed {
+		t.Fatalf("gitStatus()[new.txt] = %q, want %q; full map: %+v", got["new.txt"], ChangeRenamed, got)
+	}
+	if _, ok := got["old.txt"]; ok {
+		t.Fatalf("gitStatus() should not key renamed file by old path: %+v", got)
+	}
+
+	changed := changedFilesForEvents([]string{"new.txt"}, got)
+	want := []ChangedFile{{Path: "new.txt", Action: ChangeRenamed}}
+	if len(changed) != len(want) || changed[0] != want[0] {
+		t.Fatalf("changedFilesForEvents() = %+v, want %+v", changed, want)
+	}
+}
+
+func TestChangedFilesForEventsKeepsActions(t *testing.T) {
+	got := changedFilesForEvents(
+		[]string{"src"},
+		map[string]ChangeAction{
+			".gitignore": ChangeModified,
+			"src/new.go": ChangeAdded,
+		},
+	)
+	want := []ChangedFile{{Path: "src/new.go", Action: ChangeAdded}}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("changedFilesForEvents() = %+v, want %+v", got, want)
+	}
+}
+
+func TestSafePathPartRejectsOptionLikeParts(t *testing.T) {
+	for _, part := range []string{"-h", "../org", "org/repo", `org\repo`, "bad space"} {
+		if safePathPart(part) {
+			t.Fatalf("safePathPart(%q) = true, want false", part)
+		}
+	}
+	for _, part := range []string{"imfing", "diffs-cli", "repo.name", "repo_name"} {
+		if !safePathPart(part) {
+			t.Fatalf("safePathPart(%q) = false, want true", part)
+		}
 	}
 }
 
@@ -378,13 +567,13 @@ func TestLocalWatcherIgnoresGitDirectory(t *testing.T) {
 	}
 }
 
-func TestLocalWatcherNormalizesCommentTempFiles(t *testing.T) {
+func TestLocalWatcherIgnoresCommentTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	w := &localWatcher{cwd: dir}
 	name := filepath.Join(dir, ".diffs", ".comments-123.json")
 
-	if got := w.displayName(name); got != ".diffs/comments.json" {
-		t.Fatalf("displayName() = %q, want .diffs/comments.json", got)
+	if !w.ignore(name) {
+		t.Fatal("comment temp files should be ignored")
 	}
 }
 

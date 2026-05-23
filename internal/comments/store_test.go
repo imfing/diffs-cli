@@ -3,10 +3,12 @@ package comments
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -88,6 +90,45 @@ func TestStoreListsCurrentBranchOnly(t *testing.T) {
 	}
 }
 
+func TestStoreKeepsConcurrentAdds(t *testing.T) {
+	dir := newGitRepo(t)
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	const count = 20
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := range count {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := store.AddThread(context.Background(), AddThreadInput{
+				Path: fmt.Sprintf("file-%02d.go", i),
+				Line: 1,
+				Body: "body",
+			})
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AddThread() error = %v", err)
+		}
+	}
+
+	threads, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(threads) != count {
+		t.Fatalf("thread count = %d, want %d", len(threads), count)
+	}
+}
+
 func TestStoreReturnsNotFoundForOtherBranch(t *testing.T) {
 	dir := newGitRepo(t)
 	store, err := NewStore(dir)
@@ -110,8 +151,11 @@ func TestStoreRejectsInvalidThreadInput(t *testing.T) {
 	for _, input := range []AddThreadInput{
 		{Path: "", Line: 1, Body: "body"},
 		{Path: "../outside", Line: 1, Body: "body"},
+		{Path: "a/../../outside", Line: 1, Body: "body"},
+		{Path: `a\..\..\outside`, Line: 1, Body: "body"},
 		{Path: "a.go", Line: 0, Body: "body"},
 		{Path: "a.go", Line: 1, EndLine: -1, Body: "body"},
+		{Path: "a.go", Line: 10, EndLine: 1, Body: "body"},
 		{Path: "a.go", Line: 1, Side: "right", Body: "body"},
 		{Path: "a.go", Line: 1, EndSide: "right", Body: "body"},
 		{Path: "a.go", Line: 1, Body: ""},

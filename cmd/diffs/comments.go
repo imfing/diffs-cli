@@ -10,6 +10,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	commentPreviewLimit     = 72
+	commentPreviewBodyLimit = commentPreviewLimit - len("...")
+)
+
 type commentsOptions struct {
 	json bool
 }
@@ -37,19 +42,17 @@ func newCommentsListCommand(opts *cliOptions, commentOpts *commentsOptions) *cob
 		Short: "List local comment threads for the current branch",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, err := comments.NewStore(opts.dir)
-			if err != nil {
-				return err
-			}
-			threads, err := store.List(cmd.Context())
-			if err != nil {
-				return err
-			}
-			if commentOpts.json {
-				return writeJSONCLI(cmd.OutOrStdout(), map[string]any{"threads": threads})
-			}
-			printThreads(cmd.OutOrStdout(), threads)
-			return nil
+			return withCommentStore(opts, func(store *comments.Store) error {
+				threads, err := store.List(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if commentOpts.json {
+					return writeJSONCLI(cmd.OutOrStdout(), map[string]any{"threads": threads})
+				}
+				printThreads(cmd.OutOrStdout(), threads)
+				return nil
+			})
 		},
 	}
 }
@@ -66,15 +69,13 @@ func newCommentsAddCommand(opts *cliOptions, commentOpts *commentsOptions) *cobr
 				return err
 			}
 			input.Body = body
-			store, err := comments.NewStore(opts.dir)
-			if err != nil {
-				return err
-			}
-			thread, err := store.AddThread(cmd.Context(), input)
-			if err != nil {
-				return err
-			}
-			return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			return withCommentStore(opts, func(store *comments.Store) error {
+				thread, err := store.AddThread(cmd.Context(), input)
+				if err != nil {
+					return err
+				}
+				return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			})
 		},
 	}
 	cmd.Flags().StringVar(&input.Path, "file", "", "repository-relative file path")
@@ -102,15 +103,13 @@ func newCommentsReplyCommand(opts *cliOptions, commentOpts *commentsOptions) *co
 				return err
 			}
 			input.Body = body
-			store, err := comments.NewStore(opts.dir)
-			if err != nil {
-				return err
-			}
-			thread, err := store.AddReply(cmd.Context(), args[0], input)
-			if err != nil {
-				return err
-			}
-			return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			return withCommentStore(opts, func(store *comments.Store) error {
+				thread, err := store.AddReply(cmd.Context(), args[0], input)
+				if err != nil {
+					return err
+				}
+				return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			})
 		},
 	}
 	cmd.Flags().StringVar(&input.Body, "body", "", "reply body, or - to read stdin")
@@ -125,15 +124,13 @@ func newCommentsResolveCommand(opts *cliOptions, commentOpts *commentsOptions) *
 		Short: "Resolve a local comment thread",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := comments.NewStore(opts.dir)
-			if err != nil {
-				return err
-			}
-			thread, err := store.Resolve(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			return withCommentStore(opts, func(store *comments.Store) error {
+				thread, err := store.Resolve(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			})
 		},
 	}
 }
@@ -144,17 +141,23 @@ func newCommentsReopenCommand(opts *cliOptions, commentOpts *commentsOptions) *c
 		Short: "Reopen a resolved local comment thread",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := comments.NewStore(opts.dir)
-			if err != nil {
-				return err
-			}
-			thread, err := store.Reopen(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			return withCommentStore(opts, func(store *comments.Store) error {
+				thread, err := store.Reopen(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				return printThreadResult(cmd.OutOrStdout(), thread, commentOpts.json)
+			})
 		},
 	}
+}
+
+func withCommentStore(opts *cliOptions, fn func(*comments.Store) error) error {
+	store, err := comments.NewStore(opts.dir)
+	if err != nil {
+		return err
+	}
+	return fn(store)
 }
 
 func bodyFromFlag(cmd *cobra.Command, body string) (string, error) {
@@ -172,19 +175,19 @@ func printThreadResult(w io.Writer, thread comments.Thread, asJSON bool) error {
 	if asJSON {
 		return writeJSONCLI(w, thread)
 	}
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", thread.ID, thread.Status, threadLocation(thread), latestCommentBody(thread))
-	return nil
+	_, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", thread.ID, thread.Status, threadLocation(thread), latestCommentBody(thread))
+	return err
 }
 
 func printThreads(w io.Writer, threads []comments.Thread) {
 	if len(threads) == 0 {
-		fmt.Fprintln(w, "No local comment threads.")
+		_, _ = fmt.Fprintln(w, "No local comment threads.")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tSTATUS\tLOCATION\tCOMMENTS\tLATEST")
+	_, _ = fmt.Fprintln(tw, "ID\tSTATUS\tLOCATION\tCOMMENTS\tLATEST")
 	for _, thread := range threads {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", thread.ID, thread.Status, threadLocation(thread), len(thread.Comments), latestCommentBody(thread))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", thread.ID, thread.Status, threadLocation(thread), len(thread.Comments), latestCommentBody(thread))
 	}
 	_ = tw.Flush()
 }
@@ -205,8 +208,9 @@ func latestCommentBody(thread comments.Thread) string {
 		return ""
 	}
 	body := strings.ReplaceAll(thread.Comments[len(thread.Comments)-1].Body, "\n", " ")
-	if len(body) > 72 {
-		return body[:69] + "..."
+	runes := []rune(body)
+	if len(runes) > commentPreviewLimit {
+		return string(runes[:commentPreviewBodyLimit]) + "..."
 	}
 	return body
 }

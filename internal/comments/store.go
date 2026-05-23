@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	gitcmd "github.com/imfing/diffs-cli/internal/git"
 )
 
 const (
@@ -25,6 +28,7 @@ type Store struct {
 	root string
 	path string
 	now  func() time.Time
+	mu   sync.Mutex
 }
 
 type File struct {
@@ -71,7 +75,10 @@ type AddReplyInput struct {
 }
 
 func NewStore(cwd string) (*Store, error) {
-	root, err := gitRoot(context.Background(), cwd)
+	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	defer cancel()
+
+	root, err := gitcmd.Root(ctx, cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +98,16 @@ func (s *Store) Root() string {
 }
 
 func (s *Store) Branch(ctx context.Context) string {
-	branch, err := gitOutput(ctx, s.root, "branch", "--show-current")
-	if err == nil && strings.TrimSpace(branch) != "" {
-		return strings.TrimSpace(branch)
-	}
-	commit, err := gitOutput(ctx, s.root, "rev-parse", "--short", "HEAD")
-	if err == nil && strings.TrimSpace(commit) != "" {
-		return strings.TrimSpace(commit)
+	if branch := gitcmd.Branch(ctx, s.root); branch != "" {
+		return branch
 	}
 	return "local"
 }
 
 func (s *Store) List(ctx context.Context) ([]Thread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	file, err := s.load()
 	if err != nil {
 		return nil, err
@@ -124,6 +129,10 @@ func (s *Store) AddThread(ctx context.Context, input AddThreadInput) (Thread, er
 	}
 	author := cleanAuthor(input.Author)
 	now := s.now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	thread := Thread{
 		ID:        newID("thr"),
 		Provider:  "local",
@@ -195,6 +204,10 @@ func (s *Store) updateThread(ctx context.Context, threadID string, update func(*
 	if threadID == "" {
 		return Thread{}, errors.New("thread id is required")
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	file, err := s.load()
 	if err != nil {
 		return Thread{}, err
@@ -277,14 +290,15 @@ func (s *Store) save(file File) error {
 }
 
 func cleanThreadInput(path, side string, line int, endSide string, endLine int, body string) (string, string, int, string, int, string, error) {
-	path = filepath.ToSlash(strings.TrimSpace(path))
+	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
+	path = pathpkg.Clean(path)
 	side = strings.TrimSpace(side)
 	endSide = strings.TrimSpace(endSide)
 	body = strings.TrimSpace(body)
-	if path == "" {
+	if path == "" || path == "." {
 		return "", "", 0, "", 0, "", errors.New("path is required")
 	}
-	if strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
+	if !filepath.IsLocal(path) {
 		return "", "", 0, "", 0, "", errors.New("path must be relative to the repository")
 	}
 	if line < 1 {
@@ -295,6 +309,9 @@ func cleanThreadInput(path, side string, line int, endSide string, endLine int, 
 	}
 	if endLine < 1 {
 		return "", "", 0, "", 0, "", errors.New("end line must be greater than zero")
+	}
+	if endLine < line {
+		return "", "", 0, "", 0, "", errors.New("end line must be greater than or equal to line")
 	}
 	if side == "" {
 		side = DefaultSide
@@ -320,32 +337,6 @@ func cleanAuthor(author string) string {
 		return DefaultAuthor
 	}
 	return author
-}
-
-func gitRoot(ctx context.Context, cwd string) (string, error) {
-	if cwd == "" {
-		cwd = "."
-	}
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", err
-	}
-	root, err := gitOutput(ctx, abs, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", fmt.Errorf("not a git repository: %w", err)
-	}
-	return strings.TrimSpace(root), nil
-}
-
-func gitOutput(ctx context.Context, cwd string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
 }
 
 func newID(prefix string) string {
