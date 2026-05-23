@@ -1,8 +1,11 @@
 # diffs
 
+[![CI](https://github.com/imfing/diffs-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/imfing/diffs-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/imfing/diffs-cli/actions/workflows/release.yml/badge.svg)](https://github.com/imfing/diffs-cli/actions/workflows/release.yml)
+
 Fast, beautiful diffs on the Go.
 
-<!-- screenshot goes here -->
+<img src="assets/readme-gopher.jpg" alt="gopher reviewing code diffs" width="480">
 
 ## Motivation
 
@@ -27,6 +30,8 @@ Review a GitHub pull request (requires the [GitHub CLI](https://cli.github.com))
 ```sh
 diffs pr https://github.com/org/repo/pull/123
 ```
+
+<img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="800">
 
 Common flags:
 
