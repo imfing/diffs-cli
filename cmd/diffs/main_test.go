@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -106,6 +107,59 @@ func TestResolvePRTargetFromArgsKeepsExplicitTarget(t *testing.T) {
 	if got.Path != "/org/repo/pull/123" || got.Host != "github.com" {
 		t.Fatalf("resolvePRTargetFromArgs() = %+v, want path %q host %q", got, "/org/repo/pull/123", "github.com")
 	}
+}
+
+func TestResolvePRTargetFromArgsNoArgsUsesGH(t *testing.T) {
+	dir := t.TempDir()
+	stubGHPRView(t, func(_ context.Context, gotDir string) (string, error) {
+		if gotDir != dir {
+			t.Errorf("runGHPRView dir = %q, want %q", gotDir, dir)
+		}
+		return "https://github.example.com/org/repo/pull/456\n", nil
+	})
+
+	got, err := resolvePRTargetFromArgs(nil, dir)
+	if err != nil {
+		t.Fatalf("resolvePRTargetFromArgs() error = %v", err)
+	}
+	if got.Path != "/org/repo/pull/456" || got.Host != "github.example.com" {
+		t.Fatalf("resolvePRTargetFromArgs() = %+v, want path %q host %q", got, "/org/repo/pull/456", "github.example.com")
+	}
+}
+
+func TestResolvePRTargetFromArgsNoArgsErrorsWhenGHFails(t *testing.T) {
+	stubGHPRView(t, func(context.Context, string) (string, error) {
+		return "", errors.New("no pull requests found for branch \"feat/x\"")
+	})
+
+	_, err := resolvePRTargetFromArgs(nil, t.TempDir())
+	if err == nil {
+		t.Fatal("resolvePRTargetFromArgs() succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "no pull requests found") {
+		t.Fatalf("resolvePRTargetFromArgs() error = %v, want gh stderr forwarded", err)
+	}
+}
+
+func TestResolvePRTargetFromArgsNoArgsErrorsWhenURLEmpty(t *testing.T) {
+	stubGHPRView(t, func(context.Context, string) (string, error) {
+		return "", nil
+	})
+
+	_, err := resolvePRTargetFromArgs(nil, t.TempDir())
+	if err == nil {
+		t.Fatal("resolvePRTargetFromArgs() succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "no pull request found") {
+		t.Fatalf("resolvePRTargetFromArgs() error = %v", err)
+	}
+}
+
+func stubGHPRView(t *testing.T, fn func(context.Context, string) (string, error)) {
+	t.Helper()
+	orig := runGHPRView
+	runGHPRView = fn
+	t.Cleanup(func() { runGHPRView = orig })
 }
 
 func TestRepoFromRemoteURL(t *testing.T) {

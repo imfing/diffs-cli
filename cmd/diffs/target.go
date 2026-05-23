@@ -129,6 +129,13 @@ func prTargetFromArgs(args []string) (prTarget, error) {
 }
 
 func resolvePRTargetFromArgs(args []string, dir string) (prTarget, error) {
+	if len(args) == 0 {
+		url, err := currentBranchPRURL(dir)
+		if err != nil {
+			return prTarget{}, err
+		}
+		return prTargetFromArgs([]string{url})
+	}
 	target, ok := prNumberFromArgs(args)
 	if !ok {
 		return prTargetFromArgs(args)

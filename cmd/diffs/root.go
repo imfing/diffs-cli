@@ -68,7 +68,8 @@ func newPRCommand(opts *cliOptions, started time.Time) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr [number|github-pr-url|/org/repo/pull/123]",
 		Short: "Review a GitHub pull request",
-		Args:  cobra.ExactArgs(1),
+		Long:  "Review a GitHub pull request. With no argument, resolves the PR associated with the current branch via `gh pr view`.",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := resolvePRTargetFromArgs(args, opts.dir)
 			if err != nil {
