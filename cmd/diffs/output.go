@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/imfing/diffs-cli/internal/server"
+	"golang.org/x/term"
 )
 
 const reloadDebounce = 500 * time.Millisecond
@@ -43,8 +44,15 @@ func (e quietError) Unwrap() error {
 	return e.err
 }
 
-func colorEnabled() bool {
-	return os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+func colorEnabled(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
 }
 
 func colors(enabled bool) terminalColors {

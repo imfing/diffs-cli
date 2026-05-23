@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,18 @@ import (
 	"github.com/imfing/diffs-cli/internal/comments"
 	"github.com/imfing/diffs-cli/internal/server"
 )
+
+func TestMain(m *testing.M) {
+	for k, v := range map[string]string{
+		"GIT_AUTHOR_NAME":     "Test",
+		"GIT_AUTHOR_EMAIL":    "test@example.com",
+		"GIT_COMMITTER_NAME":  "Test",
+		"GIT_COMMITTER_EMAIL": "test@example.com",
+	} {
+		_ = os.Setenv(k, v)
+	}
+	os.Exit(m.Run())
+}
 
 func TestTargetPathFromArgs(t *testing.T) {
 	tests := []struct {
@@ -62,7 +75,6 @@ func TestRootCommandRejectsDirectPRTarget(t *testing.T) {
 }
 
 func TestLocalCommandRejectsNonGitRepository(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
 	dir := t.TempDir()
 	var errOut bytes.Buffer
 	cmd := newRootCommand(time.Time{})

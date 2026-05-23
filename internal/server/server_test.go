@@ -19,6 +19,18 @@ import (
 	"github.com/imfing/diffs-cli/internal/appconfig"
 )
 
+func TestMain(m *testing.M) {
+	for k, v := range map[string]string{
+		"GIT_AUTHOR_NAME":     "Test",
+		"GIT_AUTHOR_EMAIL":    "test@example.com",
+		"GIT_COMMITTER_NAME":  "Test",
+		"GIT_COMMITTER_EMAIL": "test@example.com",
+	} {
+		_ = os.Setenv(k, v)
+	}
+	os.Exit(m.Run())
+}
+
 func TestConfigIncludesCurrentBranch(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
@@ -131,8 +143,6 @@ func TestGitDiffNoIndexUsesDevNullHeader(t *testing.T) {
 func TestLocalDiffIncludesStagedAndUnstagedTrackedChanges(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
@@ -154,8 +164,6 @@ func TestLocalDiffIncludesStagedAndUnstagedTrackedChanges(t *testing.T) {
 func TestEventsStreamOnLocalFileChange(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
@@ -203,8 +211,6 @@ func TestEventsStreamOnLocalFileChange(t *testing.T) {
 func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
@@ -242,8 +248,6 @@ func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	git(t, dir, "add", ".gitignore")
 	git(t, dir, "commit", "-m", "init")
@@ -281,8 +285,6 @@ func TestOnChangeIgnoresGitCleanBuildOutput(t *testing.T) {
 func TestEventsStreamIgnoresGitCleanBuildOutput(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	git(t, dir, "add", ".gitignore")
 	git(t, dir, "commit", "-m", "init")
@@ -330,8 +332,6 @@ func TestEventsStreamIgnoresGitCleanBuildOutput(t *testing.T) {
 func TestWatcherDisabledDoesNotObserveLocalChanges(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
@@ -361,8 +361,6 @@ func TestWatcherDisabledDoesNotObserveLocalChanges(t *testing.T) {
 func TestGitStatusReturnsChangedPaths(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "web/dist/\n")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", ".gitignore", "tracked.txt")
@@ -396,8 +394,6 @@ func TestGitStatusReturnsChangedPaths(t *testing.T) {
 func TestGitStatusActions(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "init")
@@ -429,8 +425,6 @@ func TestGitStatusActions(t *testing.T) {
 func TestGitStatusUsesNewPathForRenames(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
 	writeFile(t, filepath.Join(dir, "old.txt"), "one\n")
 	git(t, dir, "add", "old.txt")
 	git(t, dir, "commit", "-m", "init")

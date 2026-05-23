@@ -25,7 +25,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 	if targetPath == "/local" {
 		root, err := gitRoot(displayCWD)
 		if err != nil {
-			printLocalGitHelp(errOut, displayCWD, colorEnabled())
+			printLocalGitHelp(errOut, displayCWD, colorEnabled(errOut))
 			_ = cmd.Help()
 			return quietError{err: err}
 		}
@@ -44,7 +44,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		Watch:      targetPath == "/local",
 	}
 	if targetPath == "/local" {
-		reload := newReloadLogger(out, colorEnabled())
+		reload := newReloadLogger(out, colorEnabled(out))
 		cfg.OnChange = func(files []server.ChangedFile) {
 			reload(time.Now(), files)
 		}
@@ -68,7 +68,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 	}
 	url := browserURL(ln.Addr(), targetPath)
 	if fallback != nil {
-		printPortFallback(out, fallback.Requested, fallback.Actual, colorEnabled())
+		printPortFallback(out, fallback.Requested, fallback.Actual, colorEnabled(out))
 	}
 	printStartup(out, startupInfo{
 		URL:      url,
@@ -76,7 +76,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		CWD:      displayCWD,
 		Watching: targetPath == "/local",
 		Elapsed:  time.Since(started),
-	}, colorEnabled())
+	}, colorEnabled(out))
 
 	if !opts.noOpen {
 		if err := openBrowser(url); err != nil {
