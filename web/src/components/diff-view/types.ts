@@ -43,11 +43,40 @@ export type AppConfig = {
   wordWrap?: boolean;
 };
 
+export type PullRequestInfo = {
+  title: string;
+  state: string;
+  draft: boolean;
+  merged: boolean;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  commits: number;
+  headRef: string;
+  headLabel: string;
+  headRepo: string;
+  baseRef: string;
+  baseLabel: string;
+  baseRepo: string;
+};
+
 export type ReviewComment = {
   id: string;
   author: string;
   body: string;
   createdAt: string;
+};
+
+export type PendingCommentDraft = {
+  path: string;
+  side: "additions" | "deletions";
+  line: number;
+  endSide: "additions" | "deletions";
+  endLine: number;
+  body: string;
 };
 
 export type ReviewThread = {
@@ -63,6 +92,8 @@ export type ReviewThread = {
   comments: ReviewComment[];
   replyToId?: number;
   url?: string;
+  pending?: boolean;
+  draft?: PendingCommentDraft;
 };
 
 export type CommentTarget = {

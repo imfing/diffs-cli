@@ -60,9 +60,52 @@ type ghAuthor struct {
 }
 
 type githubPullResponse struct {
-	Head struct {
-		SHA string `json:"sha"`
+	Title     string    `json:"title"`
+	State     string    `json:"state"`
+	Draft     bool      `json:"draft"`
+	Merged    bool      `json:"merged"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Additions int       `json:"additions"`
+	Deletions int       `json:"deletions"`
+	Changed   int       `json:"changed_files"`
+	Commits   int       `json:"commits"`
+	User      *ghAuthor `json:"user"`
+	Head      struct {
+		SHA   string `json:"sha"`
+		Ref   string `json:"ref"`
+		Label string `json:"label"`
+		Repo  struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
+	Base struct {
+		Ref   string `json:"ref"`
+		Label string `json:"label"`
+		Repo  struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
+	} `json:"base"`
+}
+
+type pullRequestInfoResponse struct {
+	Title        string    `json:"title"`
+	State        string    `json:"state"`
+	Draft        bool      `json:"draft"`
+	Merged       bool      `json:"merged"`
+	Author       string    `json:"author"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	Additions    int       `json:"additions"`
+	Deletions    int       `json:"deletions"`
+	ChangedFiles int       `json:"changedFiles"`
+	Commits      int       `json:"commits"`
+	HeadRef      string    `json:"headRef"`
+	HeadLabel    string    `json:"headLabel"`
+	HeadRepo     string    `json:"headRepo"`
+	BaseRef      string    `json:"baseRef"`
+	BaseLabel    string    `json:"baseLabel"`
+	BaseRepo     string    `json:"baseRepo"`
 }
 
 type githubCreatedComment struct {
@@ -243,6 +286,43 @@ func (s *Server) findPullRequestThread(ctx context.Context, org, repo, number st
 }
 
 func (s *Server) pullRequestHeadSHA(ctx context.Context, org, repo, number string) (string, error) {
+	response, err := s.pullRequest(ctx, org, repo, number)
+	if err != nil {
+		return "", err
+	}
+	if response.Head.SHA == "" {
+		return "", errors.New("pull request head sha is missing")
+	}
+	return response.Head.SHA, nil
+}
+
+func (s *Server) pullRequestInfo(ctx context.Context, org, repo, number string) (pullRequestInfoResponse, error) {
+	response, err := s.pullRequest(ctx, org, repo, number)
+	if err != nil {
+		return pullRequestInfoResponse{}, err
+	}
+	return pullRequestInfoResponse{
+		Title:        response.Title,
+		State:        response.State,
+		Draft:        response.Draft,
+		Merged:       response.Merged,
+		Author:       commentAuthor(githubReviewComment{Author: response.User}),
+		CreatedAt:    response.CreatedAt,
+		UpdatedAt:    response.UpdatedAt,
+		Additions:    response.Additions,
+		Deletions:    response.Deletions,
+		ChangedFiles: response.Changed,
+		Commits:      response.Commits,
+		HeadRef:      response.Head.Ref,
+		HeadLabel:    response.Head.Label,
+		HeadRepo:     response.Head.Repo.FullName,
+		BaseRef:      response.Base.Ref,
+		BaseLabel:    response.Base.Label,
+		BaseRepo:     response.Base.Repo.FullName,
+	}, nil
+}
+
+func (s *Server) pullRequest(ctx context.Context, org, repo, number string) (githubPullResponse, error) {
 	out, err := s.ghOutput(ctx, "gh api pull request",
 		"api",
 		fmt.Sprintf("repos/%s/%s/pulls/%s", org, repo, number),
@@ -250,16 +330,13 @@ func (s *Server) pullRequestHeadSHA(ctx context.Context, org, repo, number strin
 		s.githubHost,
 	)
 	if err != nil {
-		return "", err
+		return githubPullResponse{}, err
 	}
 	var response githubPullResponse
 	if err := json.Unmarshal([]byte(out), &response); err != nil {
-		return "", err
+		return githubPullResponse{}, err
 	}
-	if response.Head.SHA == "" {
-		return "", errors.New("pull request head sha is missing")
-	}
-	return response.Head.SHA, nil
+	return response, nil
 }
 
 func convertGitHubThread(thread githubReviewThread) (comments.Thread, bool) {

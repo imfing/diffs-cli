@@ -659,6 +659,75 @@ func TestGitHubCommentsAPIListsReviewThreads(t *testing.T) {
 	}
 }
 
+func TestGitHubPullRequestInfo(t *testing.T) {
+	restore := stubGH(t, func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "repos/org/repo/pulls/123") {
+			return []byte(`{
+				"title": "Add compact PR header",
+				"state": "open",
+				"draft": false,
+				"merged": false,
+				"user": {"login": "octocat"},
+				"created_at": "2026-05-22T12:00:00Z",
+				"updated_at": "2026-05-23T12:00:00Z",
+				"additions": 10,
+				"deletions": 2,
+				"changed_files": 3,
+				"commits": 4,
+				"head": {
+					"sha": "abc123",
+					"ref": "feature",
+					"label": "contrib:feature",
+					"repo": {"full_name": "contrib/repo"}
+				},
+				"base": {
+					"ref": "main",
+					"label": "org:main",
+					"repo": {"full_name": "org/repo"}
+				}
+			}`), nil
+		}
+		t.Fatalf("unexpected gh args: %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	handler, err := New(Config{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/pull/org/repo/123", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Title        string `json:"title"`
+		State        string `json:"state"`
+		Author       string `json:"author"`
+		Additions    int    `json:"additions"`
+		Deletions    int    `json:"deletions"`
+		ChangedFiles int    `json:"changedFiles"`
+		Commits      int    `json:"commits"`
+		HeadRef      string `json:"headRef"`
+		HeadLabel    string `json:"headLabel"`
+		HeadRepo     string `json:"headRepo"`
+		BaseRef      string `json:"baseRef"`
+		BaseLabel    string `json:"baseLabel"`
+		BaseRepo     string `json:"baseRepo"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Add compact PR header" || got.State != "open" || got.Author != "octocat" ||
+		got.Additions != 10 || got.Deletions != 2 || got.ChangedFiles != 3 || got.Commits != 4 ||
+		got.HeadRef != "feature" || got.HeadLabel != "contrib:feature" || got.HeadRepo != "contrib/repo" ||
+		got.BaseRef != "main" || got.BaseLabel != "org:main" || got.BaseRepo != "org/repo" {
+		t.Fatalf("unexpected pull request info: %+v", got)
+	}
+}
+
 func TestGitHubCommentsAPICreatesReviewComment(t *testing.T) {
 	var createdArgs []string
 	restore := stubGH(t, func(_ context.Context, args ...string) ([]byte, error) {

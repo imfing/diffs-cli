@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
-import { Search, FolderTree, MessageCircle, MessageCircleMore, X } from "lucide-react";
+import { Search, FolderTree, MessageCircle, MessageCircleMore, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CommentAvatar } from "./CommentAvatar";
 import type { ReviewThread } from "./types";
@@ -38,6 +38,7 @@ export function SidebarTree({
   comments,
   onFileActivate,
   onCommentActivate,
+  onDeleteComment,
   onClose,
 }: {
   paths: readonly string[];
@@ -45,6 +46,7 @@ export function SidebarTree({
   comments: readonly ReviewThread[];
   onFileActivate: (path: string) => void;
   onCommentActivate: (thread: ReviewThread) => void;
+  onDeleteComment: (thread: ReviewThread) => void;
   onClose?: () => void;
 }) {
   const [section, setSection] = useState<SidebarSection>("files");
@@ -212,42 +214,63 @@ export function SidebarTree({
                     <div className="overflow-hidden rounded-lg border border-[rgb(0_0_0_/_0.1)] bg-white dark:border-[rgb(255_255_255_/_0.15)] dark:bg-neutral-800">
                       {threads.map((thread) => {
                         const latestComment = latestThreadComment(thread);
+                        const canDelete = thread.pending || thread.provider === "local";
                         return (
-                          <button
+                          <div
                             key={thread.id}
-                            type="button"
-                            className="hover:bg-muted flex w-full cursor-pointer items-start gap-2 border-b border-[rgb(0_0_0_/_0.1)] bg-card p-3 text-left text-sm transition-colors outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 focus-visible:ring-ring dark:border-[rgb(255_255_255_/_0.15)] dark:bg-neutral-800 dark:hover:bg-[var(--diffshub-sidebar-bg)]"
-                            onClick={() => onCommentActivate(thread)}
+                            className="group/thread flex border-b border-[rgb(0_0_0_/_0.1)] bg-card transition-colors last:border-b-0 hover:bg-muted dark:border-[rgb(255_255_255_/_0.15)] dark:bg-neutral-800 dark:hover:bg-[var(--diffshub-sidebar-bg)]"
                           >
-                            <CommentAvatar author={latestComment?.author} />
-                            <div className="flex min-w-0 flex-1 flex-col gap-0.5 select-text">
-                              <div className="flex min-w-0 items-center gap-2">
-                                <span>
-                                  <span className="text-muted-foreground">
-                                    {latestComment?.author
-                                      ? `${latestComment.author} commented on `
-                                      : "Commented on "}
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 p-3 pr-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => onCommentActivate(thread)}
+                            >
+                              <CommentAvatar author={latestComment?.author} />
+                              <div className="flex min-w-0 flex-1 flex-col gap-0.5 select-text">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span>
+                                    <span className="text-muted-foreground">
+                                      {latestComment?.author
+                                        ? `${latestComment.author} commented on `
+                                        : "Commented on "}
+                                    </span>
+                                    <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                                      {threadLineLabel(thread)}
+                                    </span>
                                   </span>
-                                  <span className="font-medium text-emerald-700 dark:text-emerald-400">
-                                    {threadLineLabel(thread)}
-                                  </span>
-                                </span>
-                                {thread.status === "resolved" && (
-                                  <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
-                                    Resolved
-                                  </span>
-                                )}
-                                {thread.comments.length > 1 && (
-                                  <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
-                                    {thread.comments.length}
-                                  </span>
-                                )}
+                                  {thread.status === "resolved" && (
+                                    <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+                                      Resolved
+                                    </span>
+                                  )}
+                                  {thread.pending && (
+                                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">
+                                      Pending
+                                    </span>
+                                  )}
+                                  {thread.comments.length > 1 && (
+                                    <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+                                      {thread.comments.length}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-foreground line-clamp-3 w-full break-words whitespace-pre-wrap">
+                                  {latestComment?.body ?? ""}
+                                </p>
                               </div>
-                              <p className="text-foreground line-clamp-3 w-full break-words whitespace-pre-wrap">
-                                {latestComment?.body ?? ""}
-                              </p>
-                            </div>
-                          </button>
+                            </button>
+                            {canDelete && (
+                              <button
+                                type="button"
+                                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive my-2 mr-2 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/thread:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                aria-label="Delete comment"
+                                title="Delete comment"
+                                onClick={() => onDeleteComment(thread)}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef, lazy, Suspense } from "react";
-import { useParams, useNavigate, Link } from "react-router";
+import { useParams, Link } from "react-router";
 import {
   parsePatchFiles,
   type CodeViewItem,
@@ -13,6 +13,7 @@ import {
   initialColorScheme,
   isAppColorScheme,
   persistColorScheme,
+  storedColorScheme,
   type AppColorScheme,
 } from "@/lib/colorScheme";
 import { ChevronRight } from "lucide-react";
@@ -26,7 +27,9 @@ import type {
   CommentTarget,
   DiffStyle,
   DiffThemeId,
+  PendingCommentDraft,
   PatchLoadState,
+  PullRequestInfo,
   ReviewThread,
 } from "./diff-view/types";
 import {
@@ -46,6 +49,29 @@ const MobileSidebarDrawer = lazy(() => import("./diff-view/MobileSidebarDrawer")
 
 const codeViewStyle = { flex: 1, overflow: "auto" as const };
 
+const STORAGE_DIFF_THEME = "diff-theme";
+const STORAGE_DIFF_STYLE = "diffs-diff-style";
+const STORAGE_WORD_WRAP = "diffs-word-wrap";
+const STORAGE_LINE_NUMBERS = "diffs-line-numbers";
+const STORAGE_LINE_BACKGROUNDS = "diffs-line-backgrounds";
+
+function readStoredBool(key: string): boolean | null {
+  const value = localStorage.getItem(key);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+}
+
+function readStoredDiffStyle(): DiffStyle | null {
+  const value = localStorage.getItem(STORAGE_DIFF_STYLE);
+  return isDiffStyle(value) ? value : null;
+}
+
+function readStoredDiffTheme(): DiffThemeId | null {
+  const value = localStorage.getItem(STORAGE_DIFF_THEME);
+  return isDiffThemeId(value) ? value : null;
+}
+
 function patchCacheKeyPrefix(patch: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < patch.length; i++) {
@@ -55,31 +81,66 @@ function patchCacheKeyPrefix(patch: string): string {
   return (h >>> 0).toString(36);
 }
 
+function createPendingThread(target: CommentTarget, body: string): ReviewThread {
+  const now = new Date().toISOString();
+  const draft: PendingCommentDraft = {
+    path: target.path,
+    side: target.side,
+    line: target.line,
+    endSide: target.endSide,
+    endLine: target.endLine,
+    body,
+  };
+  const hasRange = target.endLine !== target.line || target.endSide !== target.side;
+  return {
+    id: `pending:${crypto.randomUUID()}`,
+    provider: "pending",
+    branch: "",
+    path: target.path,
+    side: target.side,
+    line: target.line,
+    endSide: hasRange ? target.endSide : undefined,
+    endLine: hasRange ? target.endLine : undefined,
+    status: "open",
+    comments: [
+      {
+        id: `pending-comment:${crypto.randomUUID()}`,
+        author: "You",
+        body,
+        createdAt: now,
+      },
+    ],
+    pending: true,
+    draft,
+  };
+}
+
 export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const { org, repo, number } = useParams<{
     org: string;
     repo: string;
     number: string;
   }>();
-  const navigate = useNavigate();
 
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>("split");
-  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(() => {
-    const stored = localStorage.getItem("diff-theme");
-    return isDiffThemeId(stored) ? stored : "pierre";
-  });
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
+  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(() => readStoredDiffTheme() ?? "pierre");
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [showBackground, setShowBackground] = useState(true);
-  const [showLineNumbers, setShowLineNumbers] = useState(true);
-  const [wordWrap, setWordWrap] = useState(false);
+  const [showBackground, setShowBackground] = useState(() => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true);
+  const [showLineNumbers, setShowLineNumbers] = useState(() => readStoredBool(STORAGE_LINE_NUMBERS) ?? true);
+  const [wordWrap, setWordWrap] = useState(() => readStoredBool(STORAGE_WORD_WRAP) ?? false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
+  const [pullRequestInfo, setPullRequestInfo] = useState<{
+    endpoint: string;
+    info: PullRequestInfo;
+  } | null>(null);
   const [config, setConfig] = useState<AppConfig>({
     cwd: "",
     gitBranch: "",
@@ -89,9 +150,13 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const isLocal = source === "local";
   const prUrl = `https://${config.githubHost}/${org}/${repo}/pull/${number}`;
   const commentsEndpoint = isLocal
-    ? "/api/local-comments"
+    ? "/api/comments"
     : org && repo && number
-      ? `/api/comments/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
+      ? `/api/comments?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(number)}`
+      : null;
+  const pullRequestInfoEndpoint =
+    !isLocal && org && repo && number
+      ? `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
       : null;
   const pageTitle = isLocal
     ? `${localRepoTitle(config.cwd, config.gitBranch)} - diffs`
@@ -108,22 +173,22 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     apiFetch<AppConfig>("/api/config")
       .then((nextConfig) => {
         setConfig(nextConfig);
-        if (isAppColorScheme(nextConfig.colorScheme)) {
+        if (isAppColorScheme(nextConfig.colorScheme) && storedColorScheme() == null) {
           setAppColorScheme(nextConfig.colorScheme);
         }
-        if (isDiffThemeId(nextConfig.diffTheme)) {
+        if (isDiffThemeId(nextConfig.diffTheme) && readStoredDiffTheme() == null) {
           setDiffThemeId(nextConfig.diffTheme);
         }
-        if (isDiffStyle(nextConfig.diffStyle)) {
+        if (isDiffStyle(nextConfig.diffStyle) && readStoredDiffStyle() == null) {
           setDiffStyle(nextConfig.diffStyle);
         }
-        if (typeof nextConfig.wordWrap === "boolean") {
+        if (typeof nextConfig.wordWrap === "boolean" && readStoredBool(STORAGE_WORD_WRAP) == null) {
           setWordWrap(nextConfig.wordWrap);
         }
-        if (typeof nextConfig.lineNumbers === "boolean") {
+        if (typeof nextConfig.lineNumbers === "boolean" && readStoredBool(STORAGE_LINE_NUMBERS) == null) {
           setShowLineNumbers(nextConfig.lineNumbers);
         }
-        if (typeof nextConfig.lineBackgrounds === "boolean") {
+        if (typeof nextConfig.lineBackgrounds === "boolean" && readStoredBool(STORAGE_LINE_BACKGROUNDS) == null) {
           setShowBackground(nextConfig.lineBackgrounds);
         }
       })
@@ -195,6 +260,21 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   }, [isLocal, org, repo, number]);
 
   useEffect(() => {
+    if (pullRequestInfoEndpoint == null) return;
+    let ignore = false;
+    apiFetch<PullRequestInfo>(pullRequestInfoEndpoint)
+      .then((info) => {
+        if (!ignore) setPullRequestInfo({ endpoint: pullRequestInfoEndpoint, info });
+      })
+      .catch(() => {
+        if (!ignore) setPullRequestInfo((current) => (current?.endpoint === pullRequestInfoEndpoint ? null : current));
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [pullRequestInfoEndpoint]);
+
+  useEffect(() => {
     loadComments();
   }, [loadComments]);
 
@@ -207,6 +287,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     return parsed.flatMap((p) => p.files);
   }, [patchState]);
   const codeViewKey = patchState.patch ?? "empty";
+  const pendingCommentThreads = useMemo(
+    () => commentThreads.filter((thread) => thread.pending && thread.draft),
+    [commentThreads],
+  );
+  const currentPullRequestInfo =
+    pullRequestInfo?.endpoint === pullRequestInfoEndpoint ? pullRequestInfo.info : null;
 
   const filePaths = useMemo(() => [...new Set(files.map((f) => f.name))], [files]);
   const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(
@@ -328,6 +414,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const addComment = useCallback(
     (body: string) => {
       if (!commentTarget) return;
+      if (!isLocal) {
+        setCommentThreads((prev) => [...prev, createPendingThread(commentTarget, body)]);
+        clearCommentTarget();
+        return;
+      }
       if (commentsEndpoint == null) {
         clearCommentTarget();
         return;
@@ -352,26 +443,51 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
           clearCommentTarget();
         });
     },
-    [clearCommentTarget, commentTarget, commentsEndpoint],
+    [clearCommentTarget, commentTarget, commentsEndpoint, isLocal],
   );
 
-  const resolveThread = useCallback(
-    (threadId: string) => {
-      if (commentsEndpoint == null) {
-        setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
+  const submitPendingComments = useCallback(async () => {
+    if (commentsEndpoint == null || pendingCommentThreads.length === 0 || submittingPendingComments) {
+      return;
+    }
+    setSubmittingPendingComments(true);
+    try {
+      for (const pendingThread of pendingCommentThreads) {
+        const draft = pendingThread.draft;
+        if (!draft) continue;
+        const submittedThread = await apiFetch<ReviewThread>(commentsEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+        });
+        setCommentThreads((prev) => [
+          ...prev.filter((thread) => thread.id !== pendingThread.id && thread.id !== submittedThread.id),
+          submittedThread,
+        ]);
+      }
+    } catch (err) {
+      console.error("Failed to submit pending comments:", err);
+    } finally {
+      setSubmittingPendingComments(false);
+    }
+  }, [commentsEndpoint, pendingCommentThreads, submittingPendingComments]);
+
+  const deleteComment = useCallback(
+    (thread: ReviewThread) => {
+      if (thread.pending) {
+        setCommentThreads((prev) => prev.filter((current) => current.id !== thread.id));
         return;
       }
-      apiFetch<ReviewThread>(`${commentsEndpoint}/${encodeURIComponent(threadId)}/resolve`, {
-        method: "POST",
-      })
-        .then((thread) => {
-          setCommentThreads((prev) => prev.map((t) => (t.id === thread.id ? thread : t)));
+      if (!isLocal) return;
+      apiFetch(`/api/comments/${encodeURIComponent(thread.id)}`, { method: "DELETE" })
+        .then(() => {
+          setCommentThreads((prev) => prev.filter((current) => current.id !== thread.id));
         })
-        .catch(() => {
-          setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
+        .catch((err) => {
+          console.error("Failed to delete comment:", err);
         });
     },
-    [commentsEndpoint],
+    [isLocal],
   );
 
   useEffect(() => {
@@ -456,10 +572,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         annotation={annotation}
         onSubmitComment={addComment}
         onCancelComment={clearCommentTarget}
-        onResolveThread={resolveThread}
+        onDeleteComment={deleteComment}
       />
     ),
-    [addComment, clearCommentTarget, resolveThread],
+    [addComment, clearCommentTarget, deleteComment],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -518,6 +634,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
     comments: commentThreads,
     onFileActivate: scrollToFile,
     onCommentActivate: scrollToThread,
+    onDeleteComment: deleteComment,
   };
 
   return (
@@ -534,10 +651,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         onColorSchemeChange={handleColorSchemeChange}
         onDiffStyleToggle={() => setDiffStyle((s) => (s === "split" ? "unified" : "split"))}
         onDiffThemeChange={handleDiffThemeChange}
-        onNavigate={navigate}
         onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
+        onSubmitPendingComments={submitPendingComments}
         onToggleAllCollapsed={toggleAllFilesCollapsed}
+        pendingCommentCount={pendingCommentThreads.length}
+        pullRequestInfo={currentPullRequestInfo}
         wordWrap={wordWrap}
         prUrl={prUrl}
         selectedDiffThemeLabel={selectedDiffTheme.label}
@@ -546,6 +665,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
         setWordWrap={setWordWrap}
         settingsOpen={settingsOpen}
         sidebarOpen={sidebarOpen}
+        submittingPendingComments={submittingPendingComments}
       />
 
       <div className="flex min-h-0 flex-1">

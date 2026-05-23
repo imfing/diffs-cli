@@ -135,6 +135,7 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /api/comments/{threadID}/replies", s.handleReplyComment)
 	mux.HandleFunc("POST /api/comments/{threadID}/resolve", s.handleResolveComment)
 	mux.HandleFunc("POST /api/comments/{threadID}/reopen", s.handleReopenComment)
+	mux.HandleFunc("GET /api/pull/{org}/{repo}/{number}", s.handlePullRequestInfo)
 	mux.HandleFunc("GET /api/patch/{org}/{repo}/{number}", s.handlePatch)
 	mux.HandleFunc("/", s.handleStatic)
 	return mux, nil
@@ -175,6 +176,19 @@ func (s *Server) handleLocalDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = io.WriteString(w, patch)
+}
+
+func (s *Server) handlePullRequestInfo(w http.ResponseWriter, r *http.Request) {
+	org, repo, number, ok := prPathValues(w, r)
+	if !ok {
+		return
+	}
+	info, err := s.pullRequestInfo(r.Context(), org, repo, number)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
