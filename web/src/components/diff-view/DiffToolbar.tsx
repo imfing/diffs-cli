@@ -1,32 +1,14 @@
-import {
-  IconExternalLink as ExternalLink,
-  IconLayoutColumns as SplitView,
-  IconLayoutList as UnifiedView,
-  IconLayoutSidebar as PanelLeft,
-  IconSettings as Settings,
-} from '@tabler/icons-react';
-import { FoldVertical, UnfoldVertical } from 'lucide-react';
+import { lazy, Suspense } from 'react';
+import { ExternalLink, Columns2, Rows3, PanelLeft, FoldVertical, UnfoldVertical } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
-import {
-  Popover,
-  PopoverContent,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import type { AppColorScheme } from '@/lib/colorScheme';
 import type { AppConfig, DiffStyle, DiffThemeId } from './types';
-import { colorSchemeOptions, diffThemeOptions, displayLocalPath } from './helpers';
+import { displayLocalPath } from './helpers';
 import { PullRequestUrlForm } from './PullRequestUrlForm';
+
+const DiffSettingsPopover = lazy(() =>
+  import('./DiffSettingsPopover').then((m) => ({ default: m.DiffSettingsPopover }))
+);
 
 const headerIconButtonClass = 'size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]';
 const headerIconLinkClass = buttonVariants({
@@ -34,17 +16,15 @@ const headerIconLinkClass = buttonVariants({
   size: 'icon-sm',
   className: `${headerIconButtonClass} no-underline`,
 });
-const settingsRowClass = 'flex items-center justify-between gap-4 py-1.5 text-sm';
 
 export function DiffToolbar({
   allCollapsed,
   appColorScheme,
-  commentCount,
   config,
   diffStyle,
   diffThemeId,
-  disableBackground,
-  disableLineNumbers,
+  showBackground,
+  showLineNumbers,
   isLocal,
   onColorSchemeChange,
   onDiffStyleToggle,
@@ -52,25 +32,23 @@ export function DiffToolbar({
   onNavigate,
   onSettingsOpenChange,
   onSidebarToggle,
-  onSubmitReview,
   onToggleAllCollapsed,
-  overflow,
+  wordWrap,
   prUrl,
   selectedDiffThemeLabel,
-  setDisableBackground,
-  setDisableLineNumbers,
-  setOverflow,
+  setShowBackground,
+  setShowLineNumbers,
+  setWordWrap,
   settingsOpen,
   sidebarOpen,
 }: {
   allCollapsed: boolean;
   appColorScheme: AppColorScheme;
-  commentCount: number;
   config: AppConfig;
   diffStyle: DiffStyle;
   diffThemeId: DiffThemeId;
-  disableBackground: boolean;
-  disableLineNumbers: boolean;
+  showBackground: boolean;
+  showLineNumbers: boolean;
   isLocal: boolean;
   onColorSchemeChange: (value: AppColorScheme) => void;
   onDiffStyleToggle: () => void;
@@ -78,14 +56,13 @@ export function DiffToolbar({
   onNavigate: (path: string) => void;
   onSettingsOpenChange: (open: boolean) => void;
   onSidebarToggle: () => void;
-  onSubmitReview: () => void;
   onToggleAllCollapsed: () => void;
-  overflow: 'scroll' | 'wrap';
+  wordWrap: boolean;
   prUrl: string;
   selectedDiffThemeLabel: string;
-  setDisableBackground: (value: boolean) => void;
-  setDisableLineNumbers: (value: boolean) => void;
-  setOverflow: (value: 'scroll' | 'wrap') => void;
+  setShowBackground: (value: boolean) => void;
+  setShowLineNumbers: (value: boolean) => void;
+  setWordWrap: (value: boolean) => void;
   settingsOpen: boolean;
   sidebarOpen: boolean;
 }) {
@@ -134,7 +111,7 @@ export function DiffToolbar({
           aria-label={diffStyle === 'split' ? 'Switch to unified view' : 'Switch to split view'}
           title={diffStyle === 'split' ? 'Switch to unified view' : 'Switch to split view'}
         >
-          {diffStyle === 'split' ? <UnifiedView /> : <SplitView />}
+          {diffStyle === 'split' ? <Rows3 /> : <Columns2 />}
         </Button>
 
         <Button
@@ -150,103 +127,23 @@ export function DiffToolbar({
           {allCollapsed ? <UnfoldVertical /> : <FoldVertical />}
         </Button>
 
-        {!isLocal && commentCount > 0 && (
-          <Button
-            type="button"
-            size="sm"
-            onClick={onSubmitReview}
-          >
-            Submit Review ({commentCount})
-          </Button>
-        )}
-
-        <Popover open={settingsOpen} onOpenChange={onSettingsOpenChange}>
-          <PopoverTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={headerIconButtonClass}
-                aria-label="Settings"
-                title="Settings"
-              >
-                <Settings size={14} />
-              </Button>
-            }
+        <Suspense fallback={null}>
+          <DiffSettingsPopover
+            open={settingsOpen}
+            onOpenChange={onSettingsOpenChange}
+            appColorScheme={appColorScheme}
+            onColorSchemeChange={onColorSchemeChange}
+            diffThemeId={diffThemeId}
+            onDiffThemeChange={onDiffThemeChange}
+            selectedDiffThemeLabel={selectedDiffThemeLabel}
+            showBackground={showBackground}
+            setShowBackground={setShowBackground}
+            showLineNumbers={showLineNumbers}
+            setShowLineNumbers={setShowLineNumbers}
+            wordWrap={wordWrap}
+            setWordWrap={setWordWrap}
           />
-          <PopoverContent align="end" sideOffset={8} className="w-[300px] gap-3 p-3">
-            <PopoverHeader>
-              <PopoverTitle>Settings</PopoverTitle>
-            </PopoverHeader>
-            <div className="flex flex-col gap-1">
-              <label className={settingsRowClass}>
-                <span>Color scheme</span>
-                <Select
-                  value={appColorScheme}
-                  onValueChange={(value) => {
-                    onColorSchemeChange(value as AppColorScheme);
-                  }}
-                >
-                  <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
-                    <SelectValue>
-                      {(value) =>
-                        colorSchemeOptions.find((option) => option.id === value)?.label ?? 'System'
-                      }
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    <SelectGroup>
-                      {colorSchemeOptions.map((option) => (
-                        <SelectItem key={option.id} value={option.id} className="text-xs">
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className={settingsRowClass}>
-                <span>Diff theme</span>
-                <Select
-                  value={diffThemeId}
-                  onValueChange={(value) => {
-                    onDiffThemeChange(value as DiffThemeId);
-                  }}
-                >
-                  <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
-                    <SelectValue>
-                      {(value) =>
-                        diffThemeOptions.find((option) => option.id === value)?.label ?? selectedDiffThemeLabel
-                      }
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="end" className="max-h-[260px]">
-                    <SelectGroup>
-                      {diffThemeOptions.map((option) => (
-                        <SelectItem key={option.id} value={option.id} className="text-xs">
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className={settingsRowClass}>
-                <span>Line backgrounds</span>
-                <Switch size="sm" checked={!disableBackground} onCheckedChange={(checked) => setDisableBackground(!checked)} />
-              </label>
-              <label className={settingsRowClass}>
-                <span>Line numbers</span>
-                <Switch size="sm" checked={!disableLineNumbers} onCheckedChange={(checked) => setDisableLineNumbers(!checked)} />
-              </label>
-              <label className={settingsRowClass}>
-                <span>Word wrap</span>
-                <Switch size="sm" checked={overflow === 'wrap'} onCheckedChange={(checked) => setOverflow(checked ? 'wrap' : 'scroll')} />
-              </label>
-            </div>
-          </PopoverContent>
-        </Popover>
+        </Suspense>
       </div>
     </header>
   );

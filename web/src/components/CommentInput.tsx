@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconArrowUp as ArrowUp, IconX as X } from '@tabler/icons-react';
+import { ArrowUp, X } from 'lucide-react';
 
 export function CommentInput({
   onSubmit,
@@ -15,6 +15,8 @@ export function CommentInput({
     textareaRef.current?.focus();
   }, []);
 
+  const tryEmit = () => { const trimmed = body.trim(); if (trimmed) onSubmit(trimmed); };
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -22,13 +24,13 @@ export function CommentInput({
     }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (body.trim()) onSubmit(body.trim());
+      tryEmit();
     }
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (body.trim()) onSubmit(body.trim());
+    tryEmit();
   }
 
   return (

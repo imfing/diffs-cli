@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import {
   parsePatchFiles,
@@ -15,19 +15,10 @@ import {
   persistColorScheme,
   type AppColorScheme,
 } from '@/lib/colorScheme';
-import {
-  IconChevronRight as ChevronRight,
-} from '@tabler/icons-react';
+import { ChevronRight } from 'lucide-react';
 import { DiffAnnotation } from './diff-view/DiffAnnotation';
 import { DiffToolbar } from './diff-view/DiffToolbar';
 import { SidebarTree } from './diff-view/SidebarTree';
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from './ui/drawer';
 import type {
   AnnotationMeta,
   AppConfig,
@@ -49,6 +40,20 @@ import {
   threadEndLine,
   threadEndSide,
 } from './diff-view/helpers';
+import { apiFetch } from '@/lib/api';
+
+const MobileSidebarDrawer = lazy(() => import('./diff-view/MobileSidebarDrawer'));
+
+const codeViewStyle = { flex: 1, overflow: 'auto' as const };
+
+function patchCacheKeyPrefix(patch: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < patch.length; i++) {
+    h ^= patch.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
 
 export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const { org, repo, number } = useParams<{
@@ -68,9 +73,9 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [disableBackground, setDisableBackground] = useState(false);
-  const [disableLineNumbers, setDisableLineNumbers] = useState(false);
-  const [overflow, setOverflow] = useState<'scroll' | 'wrap'>('scroll');
+  const [showBackground, setShowBackground] = useState(true);
+  const [showLineNumbers, setShowLineNumbers] = useState(true);
+  const [wordWrap, setWordWrap] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
@@ -86,21 +91,15 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     : org && repo && number
       ? `${org}/${repo}/pull/${number} - diffs`
       : 'diffs';
-  const requestKey = isLocal ? `local:${config.cwd}` : `${org}/${repo}/${number}`;
   const [patchState, setPatchState] = useState<PatchLoadState>({
     error: null,
     patch: null,
-    requestKey,
     status: 'loading',
   });
 
   useEffect(() => {
-    fetch('/api/config')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((nextConfig: AppConfig) => {
+    apiFetch<AppConfig>('/api/config')
+      .then((nextConfig) => {
         setConfig(nextConfig);
         if (isAppColorScheme(nextConfig.colorScheme)) {
           setAppColorScheme(nextConfig.colorScheme);
@@ -112,13 +111,13 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
           setDiffStyle(nextConfig.diffStyle);
         }
         if (typeof nextConfig.wordWrap === 'boolean') {
-          setOverflow(nextConfig.wordWrap ? 'wrap' : 'scroll');
+          setWordWrap(nextConfig.wordWrap);
         }
         if (typeof nextConfig.lineNumbers === 'boolean') {
-          setDisableLineNumbers(!nextConfig.lineNumbers);
+          setShowLineNumbers(nextConfig.lineNumbers);
         }
         if (typeof nextConfig.lineBackgrounds === 'boolean') {
-          setDisableBackground(!nextConfig.lineBackgrounds);
+          setShowBackground(nextConfig.lineBackgrounds);
         }
       })
       .catch(() => {
@@ -136,12 +135,8 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
   const loadComments = useCallback(() => {
     if (!isLocal) return;
-    fetch('/api/local-comments')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data: { threads?: ReviewThread[] }) => {
+    apiFetch<{ threads?: ReviewThread[] }>('/api/local-comments')
+      .then((data) => {
         setCommentThreads(data.threads ?? []);
       })
       .catch(() => {
@@ -156,24 +151,14 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
     const load = () => {
       const endpoint = isLocal ? '/api/local-diff' : `/api/patch/${org}/${repo}/${number}`;
-      fetch(endpoint)
-        .then((res) => {
-          if (!res.ok) {
-            return res.text().then((body) => {
-              throw new Error(body || `HTTP ${res.status}`);
-            });
-          }
-          return res.text();
-        })
+      apiFetch<string>(endpoint)
         .then((text) => {
           if (!ignore) {
             setPatchState({
               error: null,
               patch: text,
-              requestKey,
               status: 'loaded',
             });
-            if (isLocal) loadComments();
           }
         })
         .catch((err: unknown) => {
@@ -181,7 +166,6 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
             setPatchState({
               error: err instanceof Error ? err.message : String(err),
               patch: null,
-              requestKey,
               status: 'error',
             });
           }
@@ -201,17 +185,21 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       eventSource?.close();
       if (fallbackInterval != null) window.clearInterval(fallbackInterval);
     };
-  }, [isLocal, org, repo, number, requestKey, loadComments]);
+  }, [isLocal, org, repo, number]);
 
-  const activePatchState = patchState.requestKey === requestKey ? patchState : null;
-  const loading = activePatchState == null || activePatchState.status === 'loading';
-  const error = activePatchState?.status === 'error' ? activePatchState.error : null;
+  useEffect(() => {
+    if (isLocal) loadComments();
+  }, [isLocal, loadComments]);
+
+  const loading = patchState.status === 'loading';
+  const error = patchState.status === 'error' ? patchState.error : null;
 
   const files = useMemo<FileDiffMetadata[]>(() => {
-    if (activePatchState?.status !== 'loaded' || !activePatchState.patch) return [];
-    const parsed = parsePatchFiles(activePatchState.patch);
+    if (patchState.status !== 'loaded' || !patchState.patch) return [];
+    const parsed = parsePatchFiles(patchState.patch, patchCacheKeyPrefix(patchState.patch));
     return parsed.flatMap((p) => p.files);
-  }, [activePatchState]);
+  }, [patchState]);
+  const codeViewKey = patchState.patch ?? 'empty';
 
   const filePaths = useMemo(() => [...new Set(files.map((f) => f.name))], [files]);
   const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(
@@ -238,6 +226,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       const itemId = filePathToItemId.get(path);
       if (itemId == null) return;
       viewerRef.current?.scrollTo({ type: 'item', id: itemId, align: 'start', behavior: 'smooth-auto' });
+      setMobileSidebarOpen(false);
     },
     [filePathToItemId],
   );
@@ -253,6 +242,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       };
       setSelectedLines({ id: itemId, range });
       viewerRef.current?.scrollTo({ type: 'range', id: itemId, range, align: 'center', behavior: 'smooth-auto' });
+      setMobileSidebarOpen(false);
     },
     [filePathToItemId],
   );
@@ -263,20 +253,6 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     }
     setSidebarOpen((open) => !open);
   }, []);
-  const activateMobileFile = useCallback(
-    (path: string) => {
-      scrollToFile(path);
-      setMobileSidebarOpen(false);
-    },
-    [scrollToFile],
-  );
-  const activateMobileComment = useCallback(
-    (thread: ReviewThread) => {
-      scrollToThread(thread);
-      setMobileSidebarOpen(false);
-    },
-    [scrollToThread],
-  );
   const toggleFileCollapsed = useCallback((itemId: string) => {
     const viewer = viewerRef.current;
     const item = viewer?.getItem(itemId);
@@ -335,7 +311,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     (body: string) => {
       if (!commentTarget) return;
       if (isLocal) {
-        fetch('/api/local-comments', {
+        apiFetch<ReviewThread>('/api/local-comments', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -347,11 +323,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
             body,
           }),
         })
-          .then((res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          })
-          .then((thread: ReviewThread) => {
+          .then((thread) => {
             setCommentThreads((prev) => [...prev.filter((t) => t.id !== thread.id), thread]);
             clearCommentTarget();
           })
@@ -382,12 +354,8 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const resolveThread = useCallback(
     (threadId: string) => {
       if (isLocal) {
-        fetch(`/api/local-comments/${threadId}/resolve`, { method: 'POST' })
-          .then((res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          })
-          .then((thread: ReviewThread) => {
+        apiFetch<ReviewThread>(`/api/local-comments/${threadId}/resolve`, { method: 'POST' })
+          .then((thread) => {
             setCommentThreads((prev) => prev.map((t) => (t.id === thread.id ? thread : t)));
           })
           .catch(() => {
@@ -441,6 +409,64 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     }
   }, [commentThreads, commentTarget, initialItems, filePathToItemId]);
 
+  const codeViewOptions = useMemo(() => ({
+    theme: selectedDiffTheme.theme,
+    themeType: selectedDiffTheme.themeType,
+    diffStyle,
+    hunkSeparators: 'line-info' as const,
+    stickyHeaders: true,
+    disableBackground: !showBackground,
+    disableLineNumbers: !showLineNumbers,
+    overflow: (wordWrap ? 'wrap' : 'scroll') as 'wrap' | 'scroll',
+    enableGutterUtility: true,
+    enableLineSelection: true,
+    onGutterUtilityClick: openCommentTarget,
+    onLineSelectionEnd: openCommentTarget,
+    layout: { paddingTop: 12, paddingBottom: 12, gap: 12 },
+  }), [
+    selectedDiffTheme.theme,
+    selectedDiffTheme.themeType,
+    diffStyle,
+    showBackground,
+    showLineNumbers,
+    wordWrap,
+    openCommentTarget,
+  ]);
+
+  const renderAnnotation = useCallback(
+    (annotation: { metadata?: AnnotationMeta }) => (
+      <DiffAnnotation
+        annotation={annotation}
+        onSubmitComment={addComment}
+        onCancelComment={clearCommentTarget}
+        onResolveThread={resolveThread}
+      />
+    ),
+    [addComment, clearCommentTarget, resolveThread],
+  );
+
+  const renderHeaderPrefix = useCallback(
+    (item: CodeViewItem<AnnotationMeta>) => {
+      const isCollapsed = item.collapsed ?? false;
+      return (
+        <button
+          type="button"
+          title={isCollapsed ? 'Expand file' : 'Collapse file'}
+          className={`-ml-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border-none p-0 transition-all text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 ${
+            isCollapsed ? '' : 'rotate-90'
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleFileCollapsed(item.id);
+          }}
+        >
+          <ChevronRight size={16} />
+        </button>
+      );
+    },
+    [toggleFileCollapsed],
+  );
+
   if (loading) {
     return (
       <div className="flex h-dvh items-center justify-center text-neutral-500">
@@ -467,17 +493,24 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     );
   }
 
+  const sidebarTreeProps = {
+    paths: filePaths,
+    files,
+    comments: commentThreads,
+    onFileActivate: scrollToFile,
+    onCommentActivate: scrollToThread,
+  };
+
   return (
     <div className="flex h-dvh flex-col">
       <DiffToolbar
         allCollapsed={allCollapsed}
         appColorScheme={appColorScheme}
-        commentCount={commentThreads.length}
         config={config}
         diffStyle={diffStyle}
         diffThemeId={diffThemeId}
-        disableBackground={disableBackground}
-        disableLineNumbers={disableLineNumbers}
+        showBackground={showBackground}
+        showLineNumbers={showLineNumbers}
         isLocal={isLocal}
         onColorSchemeChange={handleColorSchemeChange}
         onDiffStyleToggle={() => setDiffStyle((s) => (s === 'split' ? 'unified' : 'split'))}
@@ -485,101 +518,40 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
         onNavigate={navigate}
         onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
-        onSubmitReview={() => {
-          console.log('Submit review:', commentThreads);
-        }}
         onToggleAllCollapsed={toggleAllFilesCollapsed}
-        overflow={overflow}
+        wordWrap={wordWrap}
         prUrl={prUrl}
         selectedDiffThemeLabel={selectedDiffTheme.label}
-        setDisableBackground={setDisableBackground}
-        setDisableLineNumbers={setDisableLineNumbers}
-        setOverflow={setOverflow}
+        setShowBackground={setShowBackground}
+        setShowLineNumbers={setShowLineNumbers}
+        setWordWrap={setWordWrap}
         settingsOpen={settingsOpen}
-        sidebarOpen={sidebarOpen || mobileSidebarOpen}
+        sidebarOpen={sidebarOpen}
       />
 
-      {/* ── Body ── */}
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
           <aside className="hidden w-[320px] shrink-0 overflow-hidden border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 md:block">
-            <SidebarTree
-              paths={filePaths}
-              files={files}
-              comments={commentThreads}
-              onFileActivate={scrollToFile}
-              onCommentActivate={scrollToThread}
-            />
+            <SidebarTree {...sidebarTreeProps} />
           </aside>
         )}
-        <Drawer open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-          <DrawerContent className="border-neutral-200 bg-neutral-50 p-0 dark:border-neutral-700 dark:bg-neutral-900 md:hidden">
-            <DrawerHeader className="sr-only">
-              <DrawerTitle>Sidebar</DrawerTitle>
-              <DrawerDescription>Browse files, comments, and diff stats.</DrawerDescription>
-            </DrawerHeader>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <SidebarTree
-                paths={filePaths}
-                files={files}
-                comments={commentThreads}
-                onFileActivate={activateMobileFile}
-                onCommentActivate={activateMobileComment}
-              />
-            </div>
-          </DrawerContent>
-        </Drawer>
+        {mobileSidebarOpen && (
+          <Suspense fallback={null}>
+            <MobileSidebarDrawer open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+              <SidebarTree {...sidebarTreeProps} onClose={() => setMobileSidebarOpen(false)} />
+            </MobileSidebarDrawer>
+          </Suspense>
+        )}
         <CodeView<AnnotationMeta>
+          key={codeViewKey}
           ref={viewerRef}
           initialItems={initialItems}
           selectedLines={selectedLines}
           onSelectedLinesChange={setSelectedLines}
-          style={{ flex: 1, overflow: 'auto' }}
-          options={{
-            theme: selectedDiffTheme.theme,
-            themeType: selectedDiffTheme.themeType,
-            diffStyle,
-            hunkSeparators: 'line-info',
-            stickyHeaders: true,
-            disableBackground,
-            disableLineNumbers,
-            overflow,
-            enableGutterUtility: true,
-            enableLineSelection: true,
-            onGutterUtilityClick(range: SelectedLineRange, context: { item: CodeViewItem<AnnotationMeta> }) {
-              openCommentTarget(range, context);
-            },
-            onLineSelectionEnd(range: SelectedLineRange | null, context: { item: CodeViewItem<AnnotationMeta> }) {
-              openCommentTarget(range, context);
-            },
-            layout: { paddingTop: 12, paddingBottom: 12, gap: 12 },
-          }}
-          renderAnnotation={(annotation) => (
-            <DiffAnnotation
-              annotation={annotation}
-              onSubmitComment={addComment}
-              onCancelComment={clearCommentTarget}
-              onResolveThread={resolveThread}
-            />
-          )}
-          renderHeaderPrefix={(item) => {
-            const isCollapsed = item.collapsed ?? false;
-            return (
-              <button
-                type="button"
-                title={isCollapsed ? 'Expand file' : 'Collapse file'}
-                className={`-ml-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border-none p-0 transition-all text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 ${
-                  isCollapsed ? '' : 'rotate-90'
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleFileCollapsed(item.id);
-                }}
-              >
-                <ChevronRight size={16} />
-              </button>
-            );
-          }}
+          style={codeViewStyle}
+          options={codeViewOptions}
+          renderAnnotation={renderAnnotation}
+          renderHeaderPrefix={renderHeaderPrefix}
         />
       </div>
     </div>

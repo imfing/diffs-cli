@@ -28,7 +28,6 @@ export type ColorSchemeOption = {
 export type PatchLoadState = {
   error: string | null;
   patch: string | null;
-  requestKey: string;
   status: 'loading' | 'loaded' | 'error';
 };
 

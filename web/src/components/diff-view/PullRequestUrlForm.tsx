@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { IconX as X } from '@tabler/icons-react';
+import { X } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
 
 export function PullRequestUrlForm({

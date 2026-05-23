@@ -1,4 +1,4 @@
-import { IconX as X } from '@tabler/icons-react';
+import { X } from 'lucide-react';
 import { CommentInput } from '@/components/CommentInput';
 import { CommentAvatar } from './CommentAvatar';
 import type { AnnotationMeta } from './types';

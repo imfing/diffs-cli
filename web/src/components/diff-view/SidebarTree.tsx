@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FileDiffMetadata } from '@pierre/diffs';
 import type { GitStatusEntry } from '@pierre/trees';
 import { FileTree, useFileTree, useFileTreeSearch } from '@pierre/trees/react';
-import { IconSearch as Search } from '@tabler/icons-react';
-import { FolderTree, MessageCircle, MessageCircleMore } from 'lucide-react';
+import { Search, FolderTree, MessageCircle, MessageCircleMore, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CommentAvatar } from './CommentAvatar';
 import type { ReviewThread } from './types';
 import { latestThreadComment, threadEndLine, threadLineLabel } from './helpers';
+import { DiffStats } from './DiffStats';
 
 type SidebarSection = 'files' | 'comments';
 
@@ -38,12 +38,14 @@ export function SidebarTree({
   comments,
   onFileActivate,
   onCommentActivate,
+  onClose,
 }: {
   paths: readonly string[];
   files: readonly FileDiffMetadata[];
   comments: readonly ReviewThread[];
   onFileActivate: (path: string) => void;
   onCommentActivate: (thread: ReviewThread) => void;
+  onClose?: () => void;
 }) {
   const [section, setSection] = useState<SidebarSection>('files');
   const filePathSet = useMemo(() => new Set(paths), [paths]);
@@ -76,13 +78,6 @@ export function SidebarTree({
       })),
     [files],
   );
-  const pathsKey = useMemo(() => paths.join('\0'), [paths]);
-  const gitStatusKey = useMemo(
-    () => gitStatus.map((entry) => `${entry.path}\0${entry.status}`).join('\0'),
-    [gitStatus],
-  );
-  const pathsKeyRef = useRef(pathsKey);
-  const gitStatusKeyRef = useRef(gitStatusKey);
 
   const { model } = useFileTree({
     paths,
@@ -107,80 +102,48 @@ export function SidebarTree({
     onFileActivateRef.current = onFileActivate;
   }, [filePathSet, onFileActivate]);
 
-  useEffect(() => {
-    if (pathsKeyRef.current === pathsKey) return;
-    pathsKeyRef.current = pathsKey;
-    model.resetPaths(paths);
-  }, [model, paths, pathsKey]);
-
-  useEffect(() => {
-    if (gitStatusKeyRef.current === gitStatusKey) return;
-    gitStatusKeyRef.current = gitStatusKey;
-    model.setGitStatus(gitStatus);
-  }, [gitStatus, gitStatusKey, model]);
+  useEffect(() => { model.resetPaths(paths); }, [model, paths]);
+  useEffect(() => { model.setGitStatus(gitStatus); }, [model, gitStatus]);
 
   const search = useFileTreeSearch(model);
-  const handleTreeClick = useCallback(
-    (event: MouseEvent<HTMLElement>) => {
-      for (const target of event.nativeEvent.composedPath()) {
-        if (!(target instanceof HTMLElement)) continue;
-        if (target.dataset.itemType !== 'file') continue;
-        const path = target.dataset.itemPath;
-        if (path != null && filePathSet.has(path)) {
-          onFileActivate(path);
-        }
-        return;
-      }
-    },
-    [filePathSet, onFileActivate],
-  );
 
-  const stats = useMemo(() => {
-    let additions = 0;
-    let deletions = 0;
-    let lines = 0;
-    for (const f of files) {
-      lines += f.unifiedLineCount;
-      for (const h of f.hunks) {
-        additions += h.additionLines;
-        deletions += h.deletionLines;
-      }
-    }
-    return { files: paths.length, additions, deletions, lines };
-  }, [files, paths.length]);
   const CommentsIcon = openComments.length > 0 ? MessageCircleMore : MessageCircle;
 
   return (
-    <div className="flex h-full flex-col pt-3">
-      <div className="flex items-center gap-3 px-3 pb-1">
-        <div className="mr-auto flex items-center gap-2">
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-3 px-4 pt-5 pb-2 md:px-3 md:pt-3 md:pb-1">
+        <div
+          className="mr-auto flex items-center gap-0.5"
+          role="group"
+          aria-label="Sidebar sections"
+        >
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
-            className={section === 'files' ? 'text-foreground' : 'text-muted-foreground'}
-            title="Files"
+            size="icon-sm"
+            className={`size-7 ${section === 'files' ? 'pointer-events-none text-foreground' : 'text-muted-foreground'}`}
+            aria-label="Files"
             aria-pressed={section === 'files'}
             onClick={() => setSection('files')}
           >
-            <FolderTree size={14} />
+            <FolderTree size={16} />
             <span className="sr-only">Files</span>
           </Button>
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
-            className={section === 'comments' ? 'gap-1 text-foreground' : 'gap-1 text-muted-foreground'}
-            title="Comments"
+            size={openComments.length > 0 ? 'sm' : 'icon-sm'}
+            className={`${openComments.length > 0 ? 'h-7 px-1.5' : 'size-7'} ${section === 'comments' ? 'pointer-events-none text-foreground' : 'text-muted-foreground'}`}
+            aria-label="Comments"
             aria-pressed={section === 'comments'}
             onClick={() => setSection('comments')}
           >
-            <CommentsIcon size={14} />
+            <CommentsIcon size={16} />
             <span className="sr-only">Comments</span>
             {openComments.length > 0 && (
               <span
                 aria-hidden="true"
-                className="inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-neutral-200 px-1 text-[10px] leading-none font-medium tabular-nums text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+                className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-200 px-1 text-[10px] leading-none font-medium tabular-nums text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
               >
                 {openComments.length}
               </span>
@@ -191,9 +154,9 @@ export function SidebarTree({
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground"
-            title="Search files"
+            size="icon-sm"
+            className="size-7 text-muted-foreground"
+            aria-label="Show file search"
             aria-pressed={search.isOpen}
             onPointerDown={(event) => {
               if (search.isOpen) {
@@ -202,14 +165,26 @@ export function SidebarTree({
             }}
             onClick={() => (search.isOpen ? search.close() : search.open(''))}
           >
-            <Search size={14} />
+            <Search size={16} />
+          </Button>
+        )}
+        {onClose && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 text-muted-foreground md:hidden"
+            aria-label="Close file tree"
+            onClick={onClose}
+          >
+            <X size={16} />
           </Button>
         )}
       </div>
 
       <div className="mt-2 min-h-0 flex-1">
         {section === 'files' ? (
-          <FileTree model={model} onClick={handleTreeClick} style={{ height: '100%' }} />
+          <FileTree model={model} style={{ height: '100%' }} />
         ) : (
           <div className="h-full overflow-auto px-3 pb-3">
             {commentsByPath.length === 0 ? (
@@ -275,28 +250,7 @@ export function SidebarTree({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-neutral-200 px-3 py-2 dark:border-neutral-700">
-        <div className="flex items-center justify-between py-0.5 text-xs">
-          <span className="text-neutral-500">Files</span>
-          <span className="font-mono tabular-nums font-semibold">{stats.files.toLocaleString()}</span>
-        </div>
-        <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-          <span className="text-neutral-500">Additions</span>
-          <span className="font-mono tabular-nums font-semibold text-green-600 dark:text-green-400">
-            +{stats.additions.toLocaleString()}
-          </span>
-        </div>
-        <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-          <span className="text-neutral-500">Deletions</span>
-          <span className="font-mono tabular-nums font-semibold text-red-600 dark:text-red-400">
-            -{stats.deletions.toLocaleString()}
-          </span>
-        </div>
-        <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-          <span className="text-neutral-500">Lines</span>
-          <span className="font-mono tabular-nums font-semibold">{stats.lines.toLocaleString()}</span>
-        </div>
-      </div>
+      <DiffStats files={files} pathCount={paths.length} />
     </div>
   );
 }
