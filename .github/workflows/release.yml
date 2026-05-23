@@ -35,6 +35,12 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
