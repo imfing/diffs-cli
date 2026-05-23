@@ -66,11 +66,11 @@ func newLocalCommand(opts *cliOptions, started time.Time) *cobra.Command {
 
 func newPRCommand(opts *cliOptions, started time.Time) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pr [github-pr-url|/org/repo/pull/123]",
+		Use:   "pr [number|github-pr-url|/org/repo/pull/123]",
 		Short: "Review a GitHub pull request",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target, err := prTargetFromArgs(args)
+			target, err := resolvePRTargetFromArgs(args, opts.dir)
 			if err != nil {
 				return err
 			}

@@ -84,6 +84,63 @@ func TestPRTargetFromArgsIncludesURLHost(t *testing.T) {
 	}
 }
 
+func TestResolvePRTargetFromArgsUsesCurrentRepositoryForNumber(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+	git(t, dir, "remote", "add", "origin", "git@github.example.com:org/repo.git")
+
+	got, err := resolvePRTargetFromArgs([]string{"123"}, dir)
+	if err != nil {
+		t.Fatalf("resolvePRTargetFromArgs() error = %v", err)
+	}
+	if got.Path != "/org/repo/pull/123" || got.Host != "github.example.com" {
+		t.Fatalf("resolvePRTargetFromArgs() = %+v, want path %q host %q", got, "/org/repo/pull/123", "github.example.com")
+	}
+}
+
+func TestResolvePRTargetFromArgsKeepsExplicitTarget(t *testing.T) {
+	got, err := resolvePRTargetFromArgs([]string{"https://github.com/org/repo/pull/123"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolvePRTargetFromArgs() error = %v", err)
+	}
+	if got.Path != "/org/repo/pull/123" || got.Host != "github.com" {
+		t.Fatalf("resolvePRTargetFromArgs() = %+v, want path %q host %q", got, "/org/repo/pull/123", "github.com")
+	}
+}
+
+func TestRepoFromRemoteURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		remote    string
+		wantHost  string
+		wantOwner string
+		wantRepo  string
+		wantErr   bool
+	}{
+		{name: "https", remote: "https://github.com/org/repo.git", wantHost: "github.com", wantOwner: "org", wantRepo: "repo"},
+		{name: "ssh scp", remote: "git@github.com:org/repo.git", wantHost: "github.com", wantOwner: "org", wantRepo: "repo"},
+		{name: "ssh url", remote: "ssh://git@github.example.com/org/repo.git", wantHost: "github.example.com", wantOwner: "org", wantRepo: "repo"},
+		{name: "missing repo", remote: "https://github.com/org", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := repoFromRemoteURL(tt.remote)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("repoFromRemoteURL() succeeded, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("repoFromRemoteURL() error = %v", err)
+			}
+			if got.Host != tt.wantHost || got.Owner != tt.wantOwner || got.Name != tt.wantRepo {
+				t.Fatalf("repoFromRemoteURL() = %+v, want host %q owner %q repo %q", got, tt.wantHost, tt.wantOwner, tt.wantRepo)
+			}
+		})
+	}
+}
+
 func TestResolveGitHubHostPrefersURLHostWhenFlagOmitted(t *testing.T) {
 	cmd := newRootCommand(time.Time{})
 	prCmd, _, err := cmd.Find([]string{"pr"})
@@ -253,13 +310,13 @@ func TestListenWithPortFallbackUsesRandomPortWhenBusy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen occupied port: %v", err)
 	}
-	defer occupied.Close()
+	defer func() { _ = occupied.Close() }()
 
 	ln, fallback, err := listenWithPortFallback(occupied.Addr().String())
 	if err != nil {
 		t.Fatalf("listenWithPortFallback() error = %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	if fallback == nil {
 		t.Fatal("listenWithPortFallback() fallback = nil, want fallback")
 	}
@@ -468,7 +525,7 @@ func TestPRCommandHelp(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"diffs pr [github-pr-url|/org/repo/pull/123]",
+		"diffs pr [number|github-pr-url|/org/repo/pull/123]",
 		"--host string",
 		"--gh-host string",
 		"--port int",

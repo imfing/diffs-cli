@@ -41,3 +41,13 @@ func gitBranch(cwd string) string {
 	defer cancel()
 	return gitcmd.Branch(ctx, cwd)
 }
+
+func gitRemoteURL(cwd, name string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	defer cancel()
+	out, err := gitcmd.Run(ctx, cwd, "remote", "get-url", name)
+	if err != nil {
+		return "", fmt.Errorf("get git remote %q URL: %w", name, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"syscall"
@@ -125,6 +126,83 @@ func prTargetFromArgs(args []string) (prTarget, error) {
 		}
 	}
 	return prTarget{}, fmt.Errorf("target must be a GitHub PR URL or /org/repo/pull/123")
+}
+
+func resolvePRTargetFromArgs(args []string, dir string) (prTarget, error) {
+	target, ok := prNumberFromArgs(args)
+	if !ok {
+		return prTargetFromArgs(args)
+	}
+
+	remote, err := gitRemoteURL(dir, "origin")
+	if err != nil {
+		return prTarget{}, fmt.Errorf("resolve current repository for PR #%s: %w", target, err)
+	}
+	repo, err := repoFromRemoteURL(remote)
+	if err != nil {
+		return prTarget{}, fmt.Errorf("resolve current repository for PR #%s: %w", target, err)
+	}
+	return prTarget{
+		Path: fmt.Sprintf("/%s/%s/pull/%s", repo.Owner, repo.Name, target),
+		Host: repo.Host,
+	}, nil
+}
+
+func prNumberFromArgs(args []string) (string, bool) {
+	if len(args) != 1 {
+		return "", false
+	}
+	target := strings.TrimSpace(args[0])
+	n, err := strconv.Atoi(target)
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	return target, true
+}
+
+type remoteRepo struct {
+	Host  string
+	Owner string
+	Name  string
+}
+
+func repoFromRemoteURL(remote string) (remoteRepo, error) {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return remoteRepo{}, fmt.Errorf("origin remote URL is empty")
+	}
+	var host, path string
+	if strings.Contains(remote, "://") {
+		u, err := url.Parse(remote)
+		if err != nil {
+			return remoteRepo{}, err
+		}
+		host = u.Hostname()
+		if host == "" {
+			return remoteRepo{}, fmt.Errorf("origin remote URL must include a host")
+		}
+		path = u.Path
+	} else {
+		userHost, scpPath, ok := strings.Cut(remote, ":")
+		if !ok || strings.Contains(userHost, "/") {
+			return remoteRepo{}, fmt.Errorf("origin remote URL must be an absolute URL or SCP-style remote")
+		}
+		host = userHost
+		if _, after, ok := strings.Cut(userHost, "@"); ok {
+			host = after
+		}
+		path = scpPath
+	}
+	host = strings.ToLower(host)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 {
+		return remoteRepo{}, fmt.Errorf("origin remote URL must include owner and repository")
+	}
+	name := strings.TrimSuffix(parts[1], ".git")
+	if parts[0] == "" || name == "" {
+		return remoteRepo{}, fmt.Errorf("origin remote URL must include owner and repository")
+	}
+	return remoteRepo{Host: host, Owner: parts[0], Name: name}, nil
 }
 
 func isPullRequestSubpage(parts []string) bool {
