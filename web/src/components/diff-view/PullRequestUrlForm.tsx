@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
-import { X } from 'lucide-react';
-import { buttonVariants } from '@/components/ui/button';
+import { useState, type FormEvent } from "react";
+import { X } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 
 export function PullRequestUrlForm({
   onNavigate,
@@ -21,7 +21,10 @@ export function PullRequestUrlForm({
   }
 
   return (
-    <form className="group mr-auto flex min-w-0 flex-1 items-center gap-0.5" onSubmit={handleUrlSubmit}>
+    <form
+      className="group mr-auto flex min-w-0 flex-1 items-center gap-0.5"
+      onSubmit={handleUrlSubmit}
+    >
       <input
         value={urlInput}
         onChange={(e) => setUrlInput(e.target.value)}
@@ -32,11 +35,12 @@ export function PullRequestUrlForm({
         <button
           type="button"
           className={buttonVariants({
-            variant: 'ghost',
-            size: 'icon-sm',
-            className: 'opacity-0 transition-opacity group-hover:opacity-50 group-focus-within:opacity-50 hover:!opacity-100',
+            variant: "ghost",
+            size: "icon-sm",
+            className:
+              "opacity-0 transition-opacity group-hover:opacity-50 group-focus-within:opacity-50 hover:!opacity-100",
           })}
-          onClick={() => setUrlInput('')}
+          onClick={() => setUrlInput("")}
           aria-label="Clear"
         >
           <X size={14} />

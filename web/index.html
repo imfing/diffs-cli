@@ -5,12 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
       (() => {
-        const stored = localStorage.getItem('diffs-color-scheme');
-        const preference = stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system';
-        const dark = preference === 'dark' || (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        const stored = localStorage.getItem("diffs-color-scheme");
+        const preference =
+          stored === "dark" || stored === "light" || stored === "system" ? stored : "system";
+        const dark =
+          preference === "dark" ||
+          (preference === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.dataset.colorScheme = preference;
-        document.documentElement.classList.toggle('dark', dark);
-        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
       })();
     </script>
     <title>diffs</title>

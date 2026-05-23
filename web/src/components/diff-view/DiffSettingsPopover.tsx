@@ -4,7 +4,7 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from '@/components/ui/popover';
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -12,17 +12,17 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Button } from '@/components/ui/button';
-import { Settings } from 'lucide-react';
-import type { AppColorScheme } from '@/lib/colorScheme';
-import type { DiffThemeId } from './types';
-import { colorSchemeOptions, diffThemeOptions } from './helpers';
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Settings } from "lucide-react";
+import type { AppColorScheme } from "@/lib/colorScheme";
+import type { DiffThemeId } from "./types";
+import { colorSchemeOptions, diffThemeOptions } from "./helpers";
 
-const settingsRowClass = 'flex items-center justify-between gap-4 py-1.5 text-sm';
+const settingsRowClass = "flex items-center justify-between gap-4 py-1.5 text-sm";
 
-const headerIconButtonClass = 'size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]';
+const headerIconButtonClass = "size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]";
 
 export function DiffSettingsPopover({
   open,
@@ -85,7 +85,7 @@ export function DiffSettingsPopover({
               <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
                 <SelectValue>
                   {(value) =>
-                    colorSchemeOptions.find((option) => option.id === value)?.label ?? 'System'
+                    colorSchemeOptions.find((option) => option.id === value)?.label ?? "System"
                   }
                 </SelectValue>
               </SelectTrigger>
@@ -111,7 +111,8 @@ export function DiffSettingsPopover({
               <SelectTrigger size="sm" className="h-7 w-[134px] text-xs">
                 <SelectValue>
                   {(value) =>
-                    diffThemeOptions.find((option) => option.id === value)?.label ?? selectedDiffThemeLabel
+                    diffThemeOptions.find((option) => option.id === value)?.label ??
+                    selectedDiffThemeLabel
                   }
                 </SelectValue>
               </SelectTrigger>

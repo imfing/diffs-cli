@@ -1,11 +1,11 @@
-export type AppColorScheme = 'dark' | 'light' | 'system';
+export type AppColorScheme = "dark" | "light" | "system";
 
-export const colorSchemeStorageKey = 'diffs-color-scheme';
+export const colorSchemeStorageKey = "diffs-color-scheme";
 
-const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 export function isAppColorScheme(value: unknown): value is AppColorScheme {
-  return value === 'dark' || value === 'light' || value === 'system';
+  return value === "dark" || value === "light" || value === "system";
 }
 
 export function storedColorScheme(): AppColorScheme | null {
@@ -14,14 +14,14 @@ export function storedColorScheme(): AppColorScheme | null {
 }
 
 export function initialColorScheme(): AppColorScheme {
-  return storedColorScheme() ?? 'system';
+  return storedColorScheme() ?? "system";
 }
 
 export function applyColorScheme(preference: AppColorScheme) {
-  const dark = preference === 'dark' || (preference === 'system' && colorSchemeQuery.matches);
+  const dark = preference === "dark" || (preference === "system" && colorSchemeQuery.matches);
   document.documentElement.dataset.colorScheme = preference;
-  document.documentElement.classList.toggle('dark', dark);
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  document.documentElement.classList.toggle("dark", dark);
+  document.documentElement.style.colorScheme = dark ? "dark" : "light";
 }
 
 export function persistColorScheme(preference: AppColorScheme) {
@@ -31,7 +31,7 @@ export function persistColorScheme(preference: AppColorScheme) {
 export function watchSystemColorScheme() {
   const listener = () => {
     const current = document.documentElement.dataset.colorScheme;
-    if (current === 'system') applyColorScheme('system');
+    if (current === "system") applyColorScheme("system");
   };
-  colorSchemeQuery.addEventListener('change', listener);
+  colorSchemeQuery.addEventListener("change", listener);
 }

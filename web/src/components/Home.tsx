@@ -1,9 +1,9 @@
-import { Link } from 'react-router';
-import { useEffect } from 'react';
+import { Link } from "react-router";
+import { useEffect } from "react";
 
 export function Home() {
   useEffect(() => {
-    document.title = 'diffs';
+    document.title = "diffs";
   }, []);
 
   return (
@@ -28,7 +28,7 @@ export function Home() {
           className="mt-5 overflow-x-auto rounded-md border border-neutral-300 bg-white p-4 text-sm leading-6 text-neutral-800 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:shadow-none"
           aria-label="CLI usage"
         >
-{`diffs
+          {`diffs
 diffs local
 diffs local --host localhost --port 4321 --dir /path/to/repo
 diffs pr /org/repo/pull/123

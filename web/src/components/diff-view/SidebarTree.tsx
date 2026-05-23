@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FileDiffMetadata } from '@pierre/diffs';
-import type { GitStatusEntry } from '@pierre/trees';
-import { FileTree, useFileTree, useFileTreeSearch } from '@pierre/trees/react';
-import { Search, FolderTree, MessageCircle, MessageCircleMore, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { CommentAvatar } from './CommentAvatar';
-import type { ReviewThread } from './types';
-import { latestThreadComment, threadEndLine, threadLineLabel } from './helpers';
-import { DiffStats } from './DiffStats';
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FileDiffMetadata } from "@pierre/diffs";
+import type { GitStatusEntry } from "@pierre/trees";
+import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
+import { Search, FolderTree, MessageCircle, MessageCircleMore, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CommentAvatar } from "./CommentAvatar";
+import type { ReviewThread } from "./types";
+import { latestThreadComment, threadEndLine, threadLineLabel } from "./helpers";
+import { DiffStats } from "./DiffStats";
 
-type SidebarSection = 'files' | 'comments';
+type SidebarSection = "files" | "comments";
 
 const fileTreeSearchCss = `
   [data-file-tree-search-container][data-open='false'] {
@@ -17,18 +17,18 @@ const fileTreeSearchCss = `
   }
 `;
 
-function gitStatusForFile(file: FileDiffMetadata): GitStatusEntry['status'] {
+function gitStatusForFile(file: FileDiffMetadata): GitStatusEntry["status"] {
   switch (file.type) {
-    case 'new':
-      return 'added';
-    case 'deleted':
-      return 'deleted';
-    case 'rename-pure':
-    case 'rename-changed':
-      return 'renamed';
-    case 'change':
+    case "new":
+      return "added";
+    case "deleted":
+      return "deleted";
+    case "rename-pure":
+    case "rename-changed":
+      return "renamed";
+    case "change":
     default:
-      return 'modified';
+      return "modified";
   }
 }
 
@@ -47,11 +47,14 @@ export function SidebarTree({
   onCommentActivate: (thread: ReviewThread) => void;
   onClose?: () => void;
 }) {
-  const [section, setSection] = useState<SidebarSection>('files');
+  const [section, setSection] = useState<SidebarSection>("files");
   const filePathSet = useMemo(() => new Set(paths), [paths]);
   const filePathSetRef = useRef(filePathSet);
   const onFileActivateRef = useRef(onFileActivate);
-  const openComments = useMemo(() => comments.filter((thread) => thread.status === 'open'), [comments]);
+  const openComments = useMemo(
+    () => comments.filter((thread) => thread.status === "open"),
+    [comments],
+  );
   const commentsByPath = useMemo(() => {
     const map = new Map<string, ReviewThread[]>();
     for (const thread of comments) {
@@ -83,10 +86,10 @@ export function SidebarTree({
     paths,
     gitStatus,
     search: true,
-    fileTreeSearchMode: 'hide-non-matches',
-    initialExpansion: 'open',
-    icons: 'standard',
-    density: 'compact',
+    fileTreeSearchMode: "hide-non-matches",
+    initialExpansion: "open",
+    icons: "standard",
+    density: "compact",
     flattenEmptyDirectories: true,
     unsafeCSS: fileTreeSearchCss,
     onSelectionChange: (selected) => {
@@ -102,8 +105,12 @@ export function SidebarTree({
     onFileActivateRef.current = onFileActivate;
   }, [filePathSet, onFileActivate]);
 
-  useEffect(() => { model.resetPaths(paths); }, [model, paths]);
-  useEffect(() => { model.setGitStatus(gitStatus); }, [model, gitStatus]);
+  useEffect(() => {
+    model.resetPaths(paths);
+  }, [model, paths]);
+  useEffect(() => {
+    model.setGitStatus(gitStatus);
+  }, [model, gitStatus]);
 
   const search = useFileTreeSearch(model);
 
@@ -121,10 +128,10 @@ export function SidebarTree({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className={`size-7 ${section === 'files' ? 'pointer-events-none text-foreground' : 'text-muted-foreground'}`}
+            className={`size-7 ${section === "files" ? "pointer-events-none text-foreground" : "text-muted-foreground"}`}
             aria-label="Files"
-            aria-pressed={section === 'files'}
-            onClick={() => setSection('files')}
+            aria-pressed={section === "files"}
+            onClick={() => setSection("files")}
           >
             <FolderTree size={16} />
             <span className="sr-only">Files</span>
@@ -132,11 +139,11 @@ export function SidebarTree({
           <Button
             type="button"
             variant="ghost"
-            size={openComments.length > 0 ? 'sm' : 'icon-sm'}
-            className={`${openComments.length > 0 ? 'h-7 px-1.5' : 'size-7'} ${section === 'comments' ? 'pointer-events-none text-foreground' : 'text-muted-foreground'}`}
+            size={openComments.length > 0 ? "sm" : "icon-sm"}
+            className={`${openComments.length > 0 ? "h-7 px-1.5" : "size-7"} ${section === "comments" ? "pointer-events-none text-foreground" : "text-muted-foreground"}`}
             aria-label="Comments"
-            aria-pressed={section === 'comments'}
-            onClick={() => setSection('comments')}
+            aria-pressed={section === "comments"}
+            onClick={() => setSection("comments")}
           >
             <CommentsIcon size={16} />
             <span className="sr-only">Comments</span>
@@ -150,7 +157,7 @@ export function SidebarTree({
             )}
           </Button>
         </div>
-        {section === 'files' && (
+        {section === "files" && (
           <Button
             type="button"
             variant="ghost"
@@ -163,7 +170,7 @@ export function SidebarTree({
                 event.preventDefault();
               }
             }}
-            onClick={() => (search.isOpen ? search.close() : search.open(''))}
+            onClick={() => (search.isOpen ? search.close() : search.open(""))}
           >
             <Search size={16} />
           </Button>
@@ -183,8 +190,8 @@ export function SidebarTree({
       </div>
 
       <div className="mt-2 min-h-0 flex-1">
-        {section === 'files' ? (
-          <FileTree model={model} style={{ height: '100%' }} />
+        {section === "files" ? (
+          <FileTree model={model} style={{ height: "100%" }} />
         ) : (
           <div className="h-full overflow-auto px-3 pb-3">
             {commentsByPath.length === 0 ? (
@@ -217,13 +224,15 @@ export function SidebarTree({
                               <div className="flex min-w-0 items-center gap-2">
                                 <span>
                                   <span className="text-muted-foreground">
-                                    {latestComment?.author ? `${latestComment.author} commented on ` : 'Commented on '}
+                                    {latestComment?.author
+                                      ? `${latestComment.author} commented on `
+                                      : "Commented on "}
                                   </span>
                                   <span className="font-medium text-emerald-700 dark:text-emerald-400">
                                     {threadLineLabel(thread)}
                                   </span>
                                 </span>
-                                {thread.status === 'resolved' && (
+                                {thread.status === "resolved" && (
                                   <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
                                     Resolved
                                   </span>
@@ -235,7 +244,7 @@ export function SidebarTree({
                                 )}
                               </div>
                               <p className="text-foreground line-clamp-3 w-full break-words whitespace-pre-wrap">
-                                {latestComment?.body ?? ''}
+                                {latestComment?.body ?? ""}
                               </p>
                             </div>
                           </button>

@@ -1,24 +1,24 @@
-import { useCallback, useEffect, useMemo, useState, useRef, lazy, Suspense } from 'react';
-import { useParams, useNavigate, Link } from 'react-router';
+import { useCallback, useEffect, useMemo, useState, useRef, lazy, Suspense } from "react";
+import { useParams, useNavigate, Link } from "react-router";
 import {
   parsePatchFiles,
   type CodeViewItem,
   type DiffLineAnnotation,
   type FileDiffMetadata,
   type SelectedLineRange,
-} from '@pierre/diffs';
-import { CodeView, type CodeViewHandle, useWorkerPool } from '@pierre/diffs/react';
+} from "@pierre/diffs";
+import { CodeView, type CodeViewHandle, useWorkerPool } from "@pierre/diffs/react";
 import {
   applyColorScheme,
   initialColorScheme,
   isAppColorScheme,
   persistColorScheme,
   type AppColorScheme,
-} from '@/lib/colorScheme';
-import { ChevronRight } from 'lucide-react';
-import { DiffAnnotation } from './diff-view/DiffAnnotation';
-import { DiffToolbar } from './diff-view/DiffToolbar';
-import { SidebarTree } from './diff-view/SidebarTree';
+} from "@/lib/colorScheme";
+import { ChevronRight } from "lucide-react";
+import { DiffAnnotation } from "./diff-view/DiffAnnotation";
+import { DiffToolbar } from "./diff-view/DiffToolbar";
+import { SidebarTree } from "./diff-view/SidebarTree";
 import type {
   AnnotationMeta,
   AppConfig,
@@ -28,7 +28,7 @@ import type {
   DiffThemeId,
   PatchLoadState,
   ReviewThread,
-} from './diff-view/types';
+} from "./diff-view/types";
 import {
   diffThemeOptions,
   isDiffStyle,
@@ -39,12 +39,12 @@ import {
   selectedRangeSide,
   threadEndLine,
   threadEndSide,
-} from './diff-view/helpers';
-import { apiFetch } from '@/lib/api';
+} from "./diff-view/helpers";
+import { apiFetch } from "@/lib/api";
 
-const MobileSidebarDrawer = lazy(() => import('./diff-view/MobileSidebarDrawer'));
+const MobileSidebarDrawer = lazy(() => import("./diff-view/MobileSidebarDrawer"));
 
-const codeViewStyle = { flex: 1, overflow: 'auto' as const };
+const codeViewStyle = { flex: 1, overflow: "auto" as const };
 
 function patchCacheKeyPrefix(patch: string): string {
   let h = 0x811c9dc5;
@@ -55,7 +55,7 @@ function patchCacheKeyPrefix(patch: string): string {
   return (h >>> 0).toString(36);
 }
 
-export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
+export function DiffView({ source = "pr" }: { source?: "pr" | "local" } = {}) {
   const { org, repo, number } = useParams<{
     org: string;
     repo: string;
@@ -63,13 +63,11 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   }>();
   const navigate = useNavigate();
 
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>('split');
-  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(
-    () => {
-      const stored = localStorage.getItem('diff-theme');
-      return isDiffThemeId(stored) ? stored : 'pierre';
-    },
-  );
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>("split");
+  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(() => {
+    const stored = localStorage.getItem("diff-theme");
+    return isDiffThemeId(stored) ? stored : "pierre";
+  });
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -82,23 +80,32 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
-  const [config, setConfig] = useState<AppConfig>({ cwd: '', gitBranch: '', githubHost: 'github.com' });
+  const [config, setConfig] = useState<AppConfig>({
+    cwd: "",
+    gitBranch: "",
+    githubHost: "github.com",
+  });
 
-  const isLocal = source === 'local';
+  const isLocal = source === "local";
   const prUrl = `https://${config.githubHost}/${org}/${repo}/pull/${number}`;
+  const commentsEndpoint = isLocal
+    ? "/api/local-comments"
+    : org && repo && number
+      ? `/api/comments/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
+      : null;
   const pageTitle = isLocal
     ? `${localRepoTitle(config.cwd, config.gitBranch)} - diffs`
     : org && repo && number
       ? `${org}/${repo}/pull/${number} - diffs`
-      : 'diffs';
+      : "diffs";
   const [patchState, setPatchState] = useState<PatchLoadState>({
     error: null,
     patch: null,
-    status: 'loading',
+    status: "loading",
   });
 
   useEffect(() => {
-    apiFetch<AppConfig>('/api/config')
+    apiFetch<AppConfig>("/api/config")
       .then((nextConfig) => {
         setConfig(nextConfig);
         if (isAppColorScheme(nextConfig.colorScheme)) {
@@ -110,13 +117,13 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
         if (isDiffStyle(nextConfig.diffStyle)) {
           setDiffStyle(nextConfig.diffStyle);
         }
-        if (typeof nextConfig.wordWrap === 'boolean') {
+        if (typeof nextConfig.wordWrap === "boolean") {
           setWordWrap(nextConfig.wordWrap);
         }
-        if (typeof nextConfig.lineNumbers === 'boolean') {
+        if (typeof nextConfig.lineNumbers === "boolean") {
           setShowLineNumbers(nextConfig.lineNumbers);
         }
-        if (typeof nextConfig.lineBackgrounds === 'boolean') {
+        if (typeof nextConfig.lineBackgrounds === "boolean") {
           setShowBackground(nextConfig.lineBackgrounds);
         }
       })
@@ -134,15 +141,15 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   }, [appColorScheme]);
 
   const loadComments = useCallback(() => {
-    if (!isLocal) return;
-    apiFetch<{ threads?: ReviewThread[] }>('/api/local-comments')
+    if (commentsEndpoint == null) return;
+    apiFetch<{ threads?: ReviewThread[] }>(commentsEndpoint)
       .then((data) => {
         setCommentThreads(data.threads ?? []);
       })
       .catch(() => {
         setCommentThreads([]);
       });
-  }, [isLocal]);
+  }, [commentsEndpoint]);
 
   useEffect(() => {
     let ignore = false;
@@ -150,14 +157,14 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     let fallbackInterval: number | undefined;
 
     const load = () => {
-      const endpoint = isLocal ? '/api/local-diff' : `/api/patch/${org}/${repo}/${number}`;
+      const endpoint = isLocal ? "/api/local-diff" : `/api/patch/${org}/${repo}/${number}`;
       apiFetch<string>(endpoint)
         .then((text) => {
           if (!ignore) {
             setPatchState({
               error: null,
               patch: text,
-              status: 'loaded',
+              status: "loaded",
             });
           }
         })
@@ -166,7 +173,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
             setPatchState({
               error: err instanceof Error ? err.message : String(err),
               patch: null,
-              status: 'error',
+              status: "error",
             });
           }
         });
@@ -175,8 +182,8 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     if (!isLocal && (!org || !repo || !number)) return;
     load();
     if (isLocal) {
-      eventSource = new EventSource('/api/events');
-      eventSource.addEventListener('diff', load);
+      eventSource = new EventSource("/api/events");
+      eventSource.addEventListener("diff", load);
       fallbackInterval = window.setInterval(load, 30000);
     }
 
@@ -188,22 +195,22 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   }, [isLocal, org, repo, number]);
 
   useEffect(() => {
-    if (isLocal) loadComments();
-  }, [isLocal, loadComments]);
+    loadComments();
+  }, [loadComments]);
 
-  const loading = patchState.status === 'loading';
-  const error = patchState.status === 'error' ? patchState.error : null;
+  const loading = patchState.status === "loading";
+  const error = patchState.status === "error" ? patchState.error : null;
 
   const files = useMemo<FileDiffMetadata[]>(() => {
-    if (patchState.status !== 'loaded' || !patchState.patch) return [];
+    if (patchState.status !== "loaded" || !patchState.patch) return [];
     const parsed = parsePatchFiles(patchState.patch, patchCacheKeyPrefix(patchState.patch));
     return parsed.flatMap((p) => p.files);
   }, [patchState]);
-  const codeViewKey = patchState.patch ?? 'empty';
+  const codeViewKey = patchState.patch ?? "empty";
 
   const filePaths = useMemo(() => [...new Set(files.map((f) => f.name))], [files]);
   const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(
-    () => files.map((f, i) => ({ id: `diff:${f.name}:${i}`, type: 'diff' as const, fileDiff: f })),
+    () => files.map((f, i) => ({ id: `diff:${f.name}:${i}`, type: "diff" as const, fileDiff: f })),
     [files],
   );
   const filePathToItemId = useMemo(() => {
@@ -225,7 +232,12 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     (path: string) => {
       const itemId = filePathToItemId.get(path);
       if (itemId == null) return;
-      viewerRef.current?.scrollTo({ type: 'item', id: itemId, align: 'start', behavior: 'smooth-auto' });
+      viewerRef.current?.scrollTo({
+        type: "item",
+        id: itemId,
+        align: "start",
+        behavior: "smooth-auto",
+      });
       setMobileSidebarOpen(false);
     },
     [filePathToItemId],
@@ -241,13 +253,19 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
         endSide: threadEndSide(thread),
       };
       setSelectedLines({ id: itemId, range });
-      viewerRef.current?.scrollTo({ type: 'range', id: itemId, range, align: 'center', behavior: 'smooth-auto' });
+      viewerRef.current?.scrollTo({
+        type: "range",
+        id: itemId,
+        range,
+        align: "center",
+        behavior: "smooth-auto",
+      });
       setMobileSidebarOpen(false);
     },
     [filePathToItemId],
   );
   const openSidebar = useCallback(() => {
-    if (window.matchMedia('(max-width: 767px)').matches) {
+    if (window.matchMedia("(max-width: 767px)").matches) {
       setMobileSidebarOpen(true);
       return;
     }
@@ -281,7 +299,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   }, []);
   const handleDiffThemeChange = useCallback((id: DiffThemeId) => {
     setDiffThemeId(id);
-    localStorage.setItem('diff-theme', id);
+    localStorage.setItem("diff-theme", id);
   }, []);
 
   const clearCommentTarget = useCallback(() => {
@@ -291,7 +309,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
   const openCommentTarget = useCallback(
     (range: SelectedLineRange | null, context: { item: CodeViewItem<AnnotationMeta> }) => {
-      if (range == null || context.item.type !== 'diff') return;
+      if (range == null || context.item.type !== "diff") return;
       const target = {
         itemId: context.item.id,
         path: context.item.fileDiff!.name,
@@ -310,62 +328,50 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   const addComment = useCallback(
     (body: string) => {
       if (!commentTarget) return;
-      if (isLocal) {
-        apiFetch<ReviewThread>('/api/local-comments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            path: commentTarget.path,
-            line: commentTarget.line,
-            side: commentTarget.side,
-            endLine: commentTarget.endLine,
-            endSide: commentTarget.endSide,
-            body,
-          }),
-        })
-          .then((thread) => {
-            setCommentThreads((prev) => [...prev.filter((t) => t.id !== thread.id), thread]);
-            clearCommentTarget();
-          })
-          .catch(() => {
-            clearCommentTarget();
-          });
+      if (commentsEndpoint == null) {
+        clearCommentTarget();
         return;
       }
-      const now = new Date().toISOString();
-      const thread: ReviewThread = {
-        id: crypto.randomUUID(),
-        provider: 'local',
-        branch: '',
-        path: commentTarget.path,
-        line: commentTarget.line,
-        side: commentTarget.side,
-        endLine: commentTarget.endLine,
-        endSide: commentTarget.endSide,
-        status: 'open',
-        comments: [{ id: crypto.randomUUID(), author: 'local', body, createdAt: now }],
-      };
-      setCommentThreads((prev) => [...prev, thread]);
-      clearCommentTarget();
+      apiFetch<ReviewThread>(commentsEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: commentTarget.path,
+          line: commentTarget.line,
+          side: commentTarget.side,
+          endLine: commentTarget.endLine,
+          endSide: commentTarget.endSide,
+          body,
+        }),
+      })
+        .then((thread) => {
+          setCommentThreads((prev) => [...prev.filter((t) => t.id !== thread.id), thread]);
+          clearCommentTarget();
+        })
+        .catch(() => {
+          clearCommentTarget();
+        });
     },
-    [clearCommentTarget, commentTarget, isLocal],
+    [clearCommentTarget, commentTarget, commentsEndpoint],
   );
 
   const resolveThread = useCallback(
     (threadId: string) => {
-      if (isLocal) {
-        apiFetch<ReviewThread>(`/api/local-comments/${threadId}/resolve`, { method: 'POST' })
-          .then((thread) => {
-            setCommentThreads((prev) => prev.map((t) => (t.id === thread.id ? thread : t)));
-          })
-          .catch(() => {
-            setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
-          });
+      if (commentsEndpoint == null) {
+        setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
         return;
       }
-      setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
+      apiFetch<ReviewThread>(`${commentsEndpoint}/${encodeURIComponent(threadId)}/resolve`, {
+        method: "POST",
+      })
+        .then((thread) => {
+          setCommentThreads((prev) => prev.map((t) => (t.id === thread.id ? thread : t)));
+        })
+        .catch(() => {
+          setCommentThreads((prev) => prev.filter((t) => t.id !== threadId));
+        });
     },
-    [isLocal],
+    [commentsEndpoint],
   );
 
   useEffect(() => {
@@ -387,13 +393,21 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       const annotations: DiffLineAnnotation<AnnotationMeta>[] = [];
 
       for (const thread of commentThreads) {
-        if (thread.status !== 'open') continue;
+        if (thread.status !== "open") continue;
         if (filePathToItemId.get(thread.path) !== itemId) continue;
-        annotations.push({ side: thread.side, lineNumber: thread.line, metadata: { type: 'comment', thread } });
+        annotations.push({
+          side: thread.side,
+          lineNumber: thread.line,
+          metadata: { type: "comment", thread },
+        });
       }
 
       if (commentTarget && commentTarget.itemId === itemId) {
-        annotations.push({ side: commentTarget.side, lineNumber: commentTarget.line, metadata: { type: 'input' } });
+        annotations.push({
+          side: commentTarget.side,
+          lineNumber: commentTarget.line,
+          metadata: { type: "input" },
+        });
       }
 
       const changed =
@@ -409,29 +423,32 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     }
   }, [commentThreads, commentTarget, initialItems, filePathToItemId]);
 
-  const codeViewOptions = useMemo(() => ({
-    theme: selectedDiffTheme.theme,
-    themeType: selectedDiffTheme.themeType,
-    diffStyle,
-    hunkSeparators: 'line-info' as const,
-    stickyHeaders: true,
-    disableBackground: !showBackground,
-    disableLineNumbers: !showLineNumbers,
-    overflow: (wordWrap ? 'wrap' : 'scroll') as 'wrap' | 'scroll',
-    enableGutterUtility: true,
-    enableLineSelection: true,
-    onGutterUtilityClick: openCommentTarget,
-    onLineSelectionEnd: openCommentTarget,
-    layout: { paddingTop: 12, paddingBottom: 12, gap: 12 },
-  }), [
-    selectedDiffTheme.theme,
-    selectedDiffTheme.themeType,
-    diffStyle,
-    showBackground,
-    showLineNumbers,
-    wordWrap,
-    openCommentTarget,
-  ]);
+  const codeViewOptions = useMemo(
+    () => ({
+      theme: selectedDiffTheme.theme,
+      themeType: selectedDiffTheme.themeType,
+      diffStyle,
+      hunkSeparators: "line-info" as const,
+      stickyHeaders: true,
+      disableBackground: !showBackground,
+      disableLineNumbers: !showLineNumbers,
+      overflow: (wordWrap ? "wrap" : "scroll") as "wrap" | "scroll",
+      enableGutterUtility: true,
+      enableLineSelection: true,
+      onGutterUtilityClick: openCommentTarget,
+      onLineSelectionEnd: openCommentTarget,
+      layout: { paddingTop: 12, paddingBottom: 12, gap: 12 },
+    }),
+    [
+      selectedDiffTheme.theme,
+      selectedDiffTheme.themeType,
+      diffStyle,
+      showBackground,
+      showLineNumbers,
+      wordWrap,
+      openCommentTarget,
+    ],
+  );
 
   const renderAnnotation = useCallback(
     (annotation: { metadata?: AnnotationMeta }) => (
@@ -451,9 +468,9 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
       return (
         <button
           type="button"
-          title={isCollapsed ? 'Expand file' : 'Collapse file'}
+          title={isCollapsed ? "Expand file" : "Collapse file"}
           className={`-ml-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border-none p-0 transition-all text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 ${
-            isCollapsed ? '' : 'rotate-90'
+            isCollapsed ? "" : "rotate-90"
           }`}
           onClick={(e) => {
             e.stopPropagation();
@@ -469,9 +486,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
 
   if (loading) {
     return (
-      <div className="flex h-dvh items-center justify-center text-neutral-500">
-        Loading diff...
-      </div>
+      <div className="flex h-dvh items-center justify-center text-neutral-500">Loading diff...</div>
     );
   }
 
@@ -479,7 +494,9 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 text-red-600">
         <p>Failed to fetch diff: {error}</p>
-        <Link to="/" className="text-blue-500 no-underline">Back</Link>
+        <Link to="/" className="text-blue-500 no-underline">
+          Back
+        </Link>
       </div>
     );
   }
@@ -487,8 +504,10 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
   if (files.length === 0) {
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 text-neutral-500">
-        <p>{isLocal ? 'No local changes in the working tree.' : 'No files changed in this PR.'}</p>
-        <Link to="/" className="text-blue-500 no-underline">Back</Link>
+        <p>{isLocal ? "No local changes in the working tree." : "No files changed in this PR."}</p>
+        <Link to="/" className="text-blue-500 no-underline">
+          Back
+        </Link>
       </div>
     );
   }
@@ -513,7 +532,7 @@ export function DiffView({ source = 'pr' }: { source?: 'pr' | 'local' } = {}) {
         showLineNumbers={showLineNumbers}
         isLocal={isLocal}
         onColorSchemeChange={handleColorSchemeChange}
-        onDiffStyleToggle={() => setDiffStyle((s) => (s === 'split' ? 'unified' : 'split'))}
+        onDiffStyleToggle={() => setDiffStyle((s) => (s === "split" ? "unified" : "split"))}
         onDiffThemeChange={handleDiffThemeChange}
         onNavigate={navigate}
         onSettingsOpenChange={setSettingsOpen}

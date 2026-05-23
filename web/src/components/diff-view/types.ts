@@ -1,17 +1,17 @@
-import type { DiffsThemeNames, SelectedLineRange, ThemesType, ThemeTypes } from '@pierre/diffs';
-import type { AppColorScheme } from '@/lib/colorScheme';
+import type { DiffsThemeNames, SelectedLineRange, ThemesType, ThemeTypes } from "@pierre/diffs";
+import type { AppColorScheme } from "@/lib/colorScheme";
 
-export type DiffStyle = 'split' | 'unified';
+export type DiffStyle = "split" | "unified";
 export type DiffThemeId =
-  | 'pierre'
-  | 'github'
-  | 'dark-plus'
-  | 'light-plus'
-  | 'one-dark-pro'
-  | 'one-light'
-  | 'monokai'
-  | 'night-owl'
-  | 'tokyo-night';
+  | "pierre"
+  | "github"
+  | "dark-plus"
+  | "light-plus"
+  | "one-dark-pro"
+  | "one-light"
+  | "monokai"
+  | "night-owl"
+  | "tokyo-night";
 
 export type DiffThemeOption = {
   id: DiffThemeId;
@@ -28,7 +28,7 @@ export type ColorSchemeOption = {
 export type PatchLoadState = {
   error: string | null;
   patch: string | null;
-  status: 'loading' | 'loaded' | 'error';
+  status: "loading" | "loaded" | "error";
 };
 
 export type AppConfig = {
@@ -55,27 +55,27 @@ export type ReviewThread = {
   provider: string;
   branch: string;
   path: string;
-  side: 'additions' | 'deletions';
+  side: "additions" | "deletions";
   line: number;
-  endSide?: 'additions' | 'deletions';
+  endSide?: "additions" | "deletions";
   endLine?: number;
-  status: 'open' | 'resolved';
+  status: "open" | "resolved";
   comments: ReviewComment[];
+  replyToId?: number;
+  url?: string;
 };
 
 export type CommentTarget = {
   itemId: string;
   path: string;
   line: number;
-  side: 'additions' | 'deletions';
+  side: "additions" | "deletions";
   endLine: number;
-  endSide: 'additions' | 'deletions';
+  endSide: "additions" | "deletions";
   range: SelectedLineRange;
 };
 
-export type AnnotationMeta =
-  | { type: 'input' }
-  | { type: 'comment'; thread: ReviewThread };
+export type AnnotationMeta = { type: "input" } | { type: "comment"; thread: ReviewThread };
 
 export type CodeViewLineSelection = {
   id: string;

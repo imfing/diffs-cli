@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '../ui/drawer';
+import type { ReactNode } from "react";
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "../ui/drawer";
 
 export default function MobileSidebarDrawer({
   open,

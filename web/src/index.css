@@ -10,11 +10,11 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
 }
 
 :root {
-  --diffs-font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --diffs-font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
   color-scheme: light;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -64,7 +64,7 @@ body {
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: 'Inter Variable', sans-serif;
+  --font-sans: "Inter Variable", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -146,7 +146,8 @@ body {
   body {
     @apply bg-background text-foreground;
   }
-  button:not(:disabled), [role="button"]:not(:disabled) {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
     cursor: pointer;
   }
   html {

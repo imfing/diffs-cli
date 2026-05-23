@@ -1,7 +1,7 @@
-import { X } from 'lucide-react';
-import { CommentInput } from '@/components/CommentInput';
-import { CommentAvatar } from './CommentAvatar';
-import type { AnnotationMeta } from './types';
+import { X } from "lucide-react";
+import { CommentInput } from "@/components/CommentInput";
+import { CommentAvatar } from "./CommentAvatar";
+import type { AnnotationMeta } from "./types";
 
 type AnnotationLike = {
   metadata?: AnnotationMeta;
@@ -21,16 +21,11 @@ export function DiffAnnotation({
   const meta = annotation.metadata;
   if (!meta) return null;
 
-  if (meta.type === 'input') {
-    return (
-      <CommentInput
-        onSubmit={onSubmitComment}
-        onCancel={onCancelComment}
-      />
-    );
+  if (meta.type === "input") {
+    return <CommentInput onSubmit={onSubmitComment} onCancel={onCancelComment} />;
   }
 
-  if (meta.type !== 'comment') return null;
+  if (meta.type !== "comment") return null;
 
   const latestComment = meta.thread.comments[meta.thread.comments.length - 1];
   return (
@@ -38,14 +33,16 @@ export function DiffAnnotation({
       <CommentAvatar author={latestComment?.author} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="text-muted-foreground flex min-w-0 items-center gap-2">
-          <span>{latestComment?.author ? `${latestComment.author} commented` : 'Commented'}</span>
+          <span>{latestComment?.author ? `${latestComment.author} commented` : "Commented"}</span>
           {meta.thread.comments.length > 1 && (
             <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
               {meta.thread.comments.length}
             </span>
           )}
         </div>
-        <p className="text-foreground w-full break-words whitespace-pre-wrap">{latestComment?.body ?? ''}</p>
+        <p className="text-foreground w-full break-words whitespace-pre-wrap">
+          {latestComment?.body ?? ""}
+        </p>
       </div>
       <button
         type="button"

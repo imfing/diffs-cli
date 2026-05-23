@@ -1,19 +1,27 @@
-import { lazy, Suspense } from 'react';
-import { ExternalLink, Columns2, Rows3, PanelLeft, FoldVertical, UnfoldVertical } from 'lucide-react';
-import { Button, buttonVariants } from '@/components/ui/button';
-import type { AppColorScheme } from '@/lib/colorScheme';
-import type { AppConfig, DiffStyle, DiffThemeId } from './types';
-import { displayLocalPath } from './helpers';
-import { PullRequestUrlForm } from './PullRequestUrlForm';
+import { lazy, Suspense } from "react";
+import {
+  ExternalLink,
+  Columns2,
+  Rows2,
+  PanelLeft,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  GitBranch,
+} from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
+import type { AppColorScheme } from "@/lib/colorScheme";
+import type { AppConfig, DiffStyle, DiffThemeId } from "./types";
+import { displayLocalPath } from "./helpers";
+import { PullRequestUrlForm } from "./PullRequestUrlForm";
 
 const DiffSettingsPopover = lazy(() =>
-  import('./DiffSettingsPopover').then((m) => ({ default: m.DiffSettingsPopover }))
+  import("./DiffSettingsPopover").then((m) => ({ default: m.DiffSettingsPopover })),
 );
 
-const headerIconButtonClass = 'size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]';
+const headerIconButtonClass = "size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]";
 const headerIconLinkClass = buttonVariants({
-  variant: 'ghost',
-  size: 'icon-sm',
+  variant: "ghost",
+  size: "icon-sm",
   className: `${headerIconButtonClass} no-underline`,
 });
 
@@ -69,12 +77,22 @@ export function DiffToolbar({
   return (
     <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 dark:border-neutral-700 dark:bg-neutral-900">
       {isLocal ? (
-        <div
-          className="mr-auto min-w-0 truncate px-2 text-[13px] text-neutral-500 dark:text-neutral-400"
-          title={config.cwd || 'current directory'}
-        >
-          {displayLocalPath(config.cwd)}
-          {config.gitBranch.trim() !== '' ? ` on ${config.gitBranch.trim()}` : ''}
+        <div className="mr-auto flex min-w-0 items-center gap-2 px-2">
+          <span
+            className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
+            title={config.cwd || "current directory"}
+          >
+            {displayLocalPath(config.cwd)}
+          </span>
+          {config.gitBranch.trim() !== "" && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+              title={`Branch: ${config.gitBranch.trim()}`}
+            >
+              <GitBranch size={12} />
+              <span className="truncate">{config.gitBranch.trim()}</span>
+            </span>
+          )}
         </div>
       ) : (
         <PullRequestUrlForm key={prUrl} prUrl={prUrl} onNavigate={onNavigate} />
@@ -95,7 +113,14 @@ export function DiffToolbar({
         </Button>
 
         {!isLocal && (
-          <a href={prUrl} target="_blank" rel="noopener noreferrer" className={headerIconLinkClass} aria-label="Open source in new tab" title="Open source in new tab">
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={headerIconLinkClass}
+            aria-label="Open source in new tab"
+            title="Open source in new tab"
+          >
             <ExternalLink size={14} />
           </a>
         )}
@@ -108,10 +133,10 @@ export function DiffToolbar({
           size="icon-sm"
           className={headerIconButtonClass}
           onClick={onDiffStyleToggle}
-          aria-label={diffStyle === 'split' ? 'Switch to unified view' : 'Switch to split view'}
-          title={diffStyle === 'split' ? 'Switch to unified view' : 'Switch to split view'}
+          aria-label={diffStyle === "split" ? "Switch to unified view" : "Switch to split view"}
+          title={diffStyle === "split" ? "Switch to unified view" : "Switch to split view"}
         >
-          {diffStyle === 'split' ? <Rows3 /> : <Columns2 />}
+          {diffStyle === "split" ? <Rows2 /> : <Columns2 />}
         </Button>
 
         <Button
@@ -121,10 +146,10 @@ export function DiffToolbar({
           className={headerIconButtonClass}
           onClick={onToggleAllCollapsed}
           aria-pressed={allCollapsed}
-          aria-label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
-          title={allCollapsed ? 'Expand all files' : 'Collapse all files'}
+          aria-label={allCollapsed ? "Expand all files" : "Collapse all files"}
+          title={allCollapsed ? "Expand all files" : "Collapse all files"}
         >
-          {allCollapsed ? <UnfoldVertical /> : <FoldVertical />}
+          {allCollapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
         </Button>
 
         <Suspense fallback={null}>

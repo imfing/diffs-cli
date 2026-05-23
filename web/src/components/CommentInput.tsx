@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, X } from 'lucide-react';
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, X } from "lucide-react";
 
 export function CommentInput({
   onSubmit,
@@ -8,21 +8,24 @@ export function CommentInput({
   onSubmit: (body: string) => void;
   onCancel: () => void;
 }) {
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
 
-  const tryEmit = () => { const trimmed = body.trim(); if (trimmed) onSubmit(trimmed); };
+  const tryEmit = () => {
+    const trimmed = body.trim();
+    if (trimmed) onSubmit(trimmed);
+  };
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') {
+    if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
     }
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       tryEmit();
     }

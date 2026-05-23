@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import type { FileDiffMetadata } from '@pierre/diffs';
+import { useMemo } from "react";
+import type { FileDiffMetadata } from "@pierre/diffs";
 
 export function DiffStats({
   files,
