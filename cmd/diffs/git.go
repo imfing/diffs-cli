@@ -50,7 +50,7 @@ func branchBaseFromTargetPath(targetPath string) string {
 }
 
 func gitRoot(cwd string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	ctx, cancel := gitCtx()
 	defer cancel()
 
 	root, err := gitcmd.Root(ctx, cwd)
@@ -61,23 +61,27 @@ func gitRoot(cwd string) (string, error) {
 }
 
 func gitBranch(cwd string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	ctx, cancel := gitCtx()
 	defer cancel()
 	return gitcmd.Branch(ctx, cwd)
 }
 
 func gitRefExists(cwd, ref string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	ctx, cancel := gitCtx()
 	defer cancel()
 	return gitcmd.OK(ctx, cwd, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 }
 
 func gitRemoteURL(cwd, name string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	ctx, cancel := gitCtx()
 	defer cancel()
 	out, err := gitcmd.Run(ctx, cwd, "remote", "get-url", name)
 	if err != nil {
 		return "", fmt.Errorf("get git remote %q URL: %w", name, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func gitCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
 }

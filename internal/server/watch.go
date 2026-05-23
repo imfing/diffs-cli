@@ -2,9 +2,10 @@ package server
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -226,12 +227,7 @@ func (w *localWatcher) isCommentTempFile(name string) bool {
 }
 
 func sortedKeys(values map[string]struct{}) []string {
-	paths := make([]string, 0, len(values))
-	for path := range values {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths
+	return slices.Sorted(maps.Keys(values))
 }
 
 func gitStatus(cwd string) (map[string]ChangeAction, error) {
@@ -321,11 +317,7 @@ func gitStatusAction(status string) ChangeAction {
 }
 
 func sortedChangedFiles(values map[string]ChangedFile) []ChangedFile {
-	paths := make([]string, 0, len(values))
-	for path := range values {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
+	paths := slices.Sorted(maps.Keys(values))
 
 	files := make([]ChangedFile, 0, len(paths))
 	for _, path := range paths {

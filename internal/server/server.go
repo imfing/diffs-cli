@@ -212,15 +212,17 @@ func (s *Server) handlePullRequestInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
-	if target, ok := s.commentTarget(w, r); ok && !target.local {
+	target, ok := s.commentTarget(w, r)
+	if !ok {
+		return
+	}
+	if !target.local {
 		threads, err := s.listPullRequestComments(r.Context(), target.org, target.repo, target.number)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"threads": threads})
-		return
-	} else if !ok {
 		return
 	}
 	store, ok := s.requireComments(w)
@@ -315,30 +317,20 @@ func (s *Server) handleReplyComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResolveComment(w http.ResponseWriter, r *http.Request) {
-	target, ok := s.commentTarget(w, r)
-	if !ok {
-		return
-	}
-	if !target.local {
-		thread, err := s.setPullRequestThreadResolved(r.Context(), target.org, target.repo, target.number, r.PathValue("threadID"), true)
-		writeThreadOrError(w, thread, err)
-		return
-	}
-	store, ok := s.requireComments(w)
-	if !ok {
-		return
-	}
-	thread, err := store.Resolve(r.Context(), r.PathValue("threadID"))
-	writeThreadOrError(w, thread, err)
+	s.handleSetResolved(w, r, true)
 }
 
 func (s *Server) handleReopenComment(w http.ResponseWriter, r *http.Request) {
+	s.handleSetResolved(w, r, false)
+}
+
+func (s *Server) handleSetResolved(w http.ResponseWriter, r *http.Request, resolved bool) {
 	target, ok := s.commentTarget(w, r)
 	if !ok {
 		return
 	}
 	if !target.local {
-		thread, err := s.setPullRequestThreadResolved(r.Context(), target.org, target.repo, target.number, r.PathValue("threadID"), false)
+		thread, err := s.setPullRequestThreadResolved(r.Context(), target.org, target.repo, target.number, r.PathValue("threadID"), resolved)
 		writeThreadOrError(w, thread, err)
 		return
 	}
@@ -346,7 +338,15 @@ func (s *Server) handleReopenComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	thread, err := store.Reopen(r.Context(), r.PathValue("threadID"))
+	var (
+		thread comments.Thread
+		err    error
+	)
+	if resolved {
+		thread, err = store.Resolve(r.Context(), r.PathValue("threadID"))
+	} else {
+		thread, err = store.Reopen(r.Context(), r.PathValue("threadID"))
+	}
 	writeThreadOrError(w, thread, err)
 }
 
@@ -550,11 +550,11 @@ func (s *Server) pullRequestPatch(ctx context.Context, org, repo, number string)
 		"-H",
 		"Accept: application/vnd.github.v3.patch",
 	}
-	out, err := s.ghOutput(ctx, "gh api", args...)
+	out, err := ghOutput(ctx, "gh api", args...)
 	if err != nil {
 		return "", err
 	}
-	return out, nil
+	return string(out), nil
 }
 
 func (s *Server) untrackedPatch(ctx context.Context) (string, error) {

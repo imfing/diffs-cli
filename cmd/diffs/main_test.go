@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestTargetPathFromArgs(t *testing.T) {
+func TestPRTargetFromArgsPath(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -42,12 +42,12 @@ func TestTargetPathFromArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := targetPathFromArgs(tt.args)
+			got, err := prTargetFromArgs(tt.args)
 			if err != nil {
-				t.Fatalf("targetPathFromArgs() error = %v", err)
+				t.Fatalf("prTargetFromArgs() error = %v", err)
 			}
-			if got != tt.want {
-				t.Fatalf("targetPathFromArgs() = %q, want %q", got, tt.want)
+			if got.Path != tt.want {
+				t.Fatalf("prTargetFromArgs().Path = %q, want %q", got.Path, tt.want)
 			}
 		})
 	}
@@ -388,8 +388,8 @@ func TestTargetPathFromArgsRejectsInvalidTarget(t *testing.T) {
 		{"https://github.example.com/org/repo/pull/123/files/1"},
 	}
 	for _, args := range tests {
-		if _, err := targetPathFromArgs(args); err == nil {
-			t.Fatalf("targetPathFromArgs(%v) succeeded, want error", args)
+		if _, err := prTargetFromArgs(args); err == nil {
+			t.Fatalf("prTargetFromArgs(%v) succeeded, want error", args)
 		}
 	}
 }

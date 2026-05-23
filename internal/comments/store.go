@@ -125,7 +125,7 @@ func (s *Store) List(ctx context.Context) ([]Thread, error) {
 }
 
 func (s *Store) AddThread(ctx context.Context, input AddThreadInput) (Thread, error) {
-	path, side, line, endSide, endLine, body, err := cleanThreadInput(input.Path, input.Side, input.Line, input.EndSide, input.EndLine, input.Body)
+	path, side, line, endSide, endLine, body, err := CleanThreadInput(input)
 	if err != nil {
 		return Thread{}, err
 	}
@@ -317,6 +317,19 @@ func (s *Store) save(file File) error {
 }
 
 func cleanThreadInput(path, side string, line int, endSide string, endLine int, body string) (string, string, int, string, int, string, error) {
+	return CleanThreadInput(AddThreadInput{
+		Path:    path,
+		Side:    side,
+		Line:    line,
+		EndSide: endSide,
+		EndLine: endLine,
+		Body:    body,
+	})
+}
+
+// CleanThreadInput normalizes and validates a thread before it is stored or sent remotely.
+func CleanThreadInput(input AddThreadInput) (string, string, int, string, int, string, error) {
+	path, side, line, endSide, endLine, body := input.Path, input.Side, input.Line, input.EndSide, input.EndLine, input.Body
 	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 	path = pathpkg.Clean(path)
 	side = strings.TrimSpace(side)

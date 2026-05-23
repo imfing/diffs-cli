@@ -34,7 +34,7 @@ func runServerTarget(cmd *cobra.Command, opts *cliOptions, targetPath string, st
 		displayCWD = root
 		opts.dir = root
 	}
-	appCfg, _, err := appconfig.LoadDefault()
+	appCfg, err := appconfig.LoadDefault()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

@@ -137,12 +137,12 @@ func (s *Server) listPullRequestComments(ctx context.Context, org, repo, number 
 		if cursor != "" {
 			args = append(args, "-F", "cursor="+cursor)
 		}
-		out, err := s.ghOutput(ctx, "gh api graphql", args...)
+		out, err := ghOutput(ctx, "gh api graphql", args...)
 		if err != nil {
 			return nil, err
 		}
 		var response githubReviewThreadsResponse
-		if err := json.Unmarshal([]byte(out), &response); err != nil {
+		if err := json.Unmarshal(out, &response); err != nil {
 			return nil, err
 		}
 		page := response.Data.Repository.PullRequest.ReviewThreads
@@ -162,7 +162,7 @@ func (s *Server) listPullRequestComments(ctx context.Context, org, repo, number 
 }
 
 func (s *Server) addPullRequestComment(ctx context.Context, org, repo, number string, input comments.AddThreadInput) (comments.Thread, error) {
-	path, side, line, endSide, endLine, body, err := cleanRemoteThreadInput(input)
+	path, side, line, endSide, endLine, body, err := comments.CleanThreadInput(input)
 	if err != nil {
 		return comments.Thread{}, err
 	}
@@ -197,12 +197,12 @@ func (s *Server) addPullRequestComment(ctx context.Context, org, repo, number st
 			"start_side="+githubSide(side),
 		)
 	}
-	out, err := s.ghOutput(ctx, "gh api create pull request comment", args...)
+	out, err := ghOutput(ctx, "gh api create pull request comment", args...)
 	if err != nil {
 		return comments.Thread{}, err
 	}
 	var created githubCreatedComment
-	if err := json.Unmarshal([]byte(out), &created); err != nil {
+	if err := json.Unmarshal(out, &created); err != nil {
 		return comments.Thread{}, err
 	}
 	return s.findPullRequestThread(ctx, org, repo, number, func(thread comments.Thread) bool {
@@ -229,7 +229,7 @@ func (s *Server) addPullRequestReply(ctx context.Context, org, repo, number, thr
 	if thread.ReplyToID == 0 {
 		return comments.Thread{}, errors.New("pull request thread has no reply target")
 	}
-	_, err = s.ghOutput(ctx, "gh api create pull request comment reply",
+	_, err = ghOutput(ctx, "gh api create pull request comment reply",
 		"api",
 		"-X",
 		"POST",
@@ -254,7 +254,7 @@ func (s *Server) setPullRequestThreadResolved(ctx context.Context, org, repo, nu
 		mutation = unresolveReviewThreadMutation
 		label = "gh api unresolve review thread"
 	}
-	_, err := s.ghOutput(ctx, label,
+	_, err := ghOutput(ctx, label,
 		"api",
 		"graphql",
 		"--hostname",
@@ -323,7 +323,7 @@ func (s *Server) pullRequestInfo(ctx context.Context, org, repo, number string) 
 }
 
 func (s *Server) pullRequest(ctx context.Context, org, repo, number string) (githubPullResponse, error) {
-	out, err := s.ghOutput(ctx, "gh api pull request",
+	out, err := ghOutput(ctx, "gh api pull request",
 		"api",
 		fmt.Sprintf("repos/%s/%s/pulls/%s", org, repo, number),
 		"--hostname",
@@ -333,7 +333,7 @@ func (s *Server) pullRequest(ctx context.Context, org, repo, number string) (git
 		return githubPullResponse{}, err
 	}
 	var response githubPullResponse
-	if err := json.Unmarshal([]byte(out), &response); err != nil {
+	if err := json.Unmarshal(out, &response); err != nil {
 		return githubPullResponse{}, err
 	}
 	return response, nil
@@ -401,45 +401,6 @@ func convertGitHubThread(thread githubReviewThread) (comments.Thread, bool) {
 	return converted, true
 }
 
-func cleanRemoteThreadInput(input comments.AddThreadInput) (string, string, int, string, int, string, error) {
-	path := strings.ReplaceAll(strings.TrimSpace(input.Path), "\\", "/")
-	side := strings.TrimSpace(input.Side)
-	endSide := strings.TrimSpace(input.EndSide)
-	body := strings.TrimSpace(input.Body)
-	if path == "" {
-		return "", "", 0, "", 0, "", errors.New("path is required")
-	}
-	if line := strings.Trim(path, "/"); line != path || strings.Contains(path, "..") {
-		return "", "", 0, "", 0, "", errors.New("path must be relative to the repository")
-	}
-	if input.Line < 1 {
-		return "", "", 0, "", 0, "", errors.New("line must be greater than zero")
-	}
-	endLine := input.EndLine
-	if endLine == 0 {
-		endLine = input.Line
-	}
-	if endLine < input.Line {
-		return "", "", 0, "", 0, "", errors.New("end line must be greater than or equal to line")
-	}
-	if side == "" {
-		side = comments.DefaultSide
-	}
-	if endSide == "" {
-		endSide = side
-	}
-	if side != "additions" && side != "deletions" {
-		return "", "", 0, "", 0, "", errors.New("side must be additions or deletions")
-	}
-	if endSide != "additions" && endSide != "deletions" {
-		return "", "", 0, "", 0, "", errors.New("end side must be additions or deletions")
-	}
-	if body == "" {
-		return "", "", 0, "", 0, "", errors.New("body is required")
-	}
-	return path, side, input.Line, endSide, endLine, body, nil
-}
-
 func commentID(comment githubReviewComment) string {
 	if comment.ID != "" {
 		return comment.ID
@@ -479,12 +440,12 @@ func defaultRunGH(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, "gh", args...).Output()
 }
 
-func (s *Server) ghOutput(ctx context.Context, label string, args ...string) (string, error) {
+func ghOutput(ctx context.Context, label string, args ...string) ([]byte, error) {
 	out, err := runGH(ctx, args...)
 	if err != nil {
-		return "", commandError(label, err, nil, "")
+		return nil, commandError(label, err, nil, "")
 	}
-	return string(out), nil
+	return out, nil
 }
 
 const reviewThreadsQuery = `

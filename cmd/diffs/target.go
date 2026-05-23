@@ -90,14 +90,6 @@ func browserURL(addr net.Addr, targetPath string) string {
 	return "http://" + net.JoinHostPort(host, port) + targetPath
 }
 
-func targetPathFromArgs(args []string) (string, error) {
-	target, err := prTargetFromArgs(args)
-	if err != nil {
-		return "", err
-	}
-	return target.Path, nil
-}
-
 func prTargetFromArgs(args []string) (prTarget, error) {
 	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
 		return prTarget{}, fmt.Errorf("expected one GitHub PR target")

@@ -73,13 +73,12 @@ func DefaultPath() (string, error) {
 	return filepath.Join(home, ".config", "diffs", "config.toml"), nil
 }
 
-func LoadDefault() (Config, string, error) {
+func LoadDefault() (Config, error) {
 	path, err := DefaultPath()
 	if err != nil {
-		return Config{}, "", err
+		return Config{}, err
 	}
-	cfg, err := Load(path)
-	return cfg, path, err
+	return Load(path)
 }
 
 func Load(path string) (Config, error) {
