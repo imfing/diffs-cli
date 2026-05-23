@@ -24,8 +24,7 @@ Download a pre-built binary from the [releases page](https://github.com/imfing/d
 Install with Homebrew:
 
 ```sh
-brew tap imfing/tap
-brew install --cask diffs
+brew install --cask imfing/tap/diffs
 ```
 
 Run from any git repository:
