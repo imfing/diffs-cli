@@ -25,6 +25,8 @@ import (
 const (
 	DefaultGitHubHost = "github.com"
 	gitDevNull        = "/dev/null"
+	// The PR UI should match GitHub's final Files changed diff, not the per-commit patch stream.
+	githubDiffMedia = "application/vnd.github.v3.diff"
 )
 
 type Config struct {
@@ -548,7 +550,7 @@ func (s *Server) pullRequestPatch(ctx context.Context, org, repo, number string)
 		"--hostname",
 		s.githubHost,
 		"-H",
-		"Accept: application/vnd.github.v3.patch",
+		"Accept: " + githubDiffMedia,
 	}
 	out, err := ghOutput(ctx, "gh api", args...)
 	if err != nil {

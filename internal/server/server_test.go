@@ -181,6 +181,41 @@ func TestBranchDiffComparesAgainstBase(t *testing.T) {
 	}
 }
 
+func TestPullRequestPatchFetchesFinalDiff(t *testing.T) {
+	var gotArgs []string
+	restore := stubGH(t, func(_ context.Context, args ...string) ([]byte, error) {
+		gotArgs = append([]string(nil), args...)
+		return []byte("diff --git a/tracked.txt b/tracked.txt\n"), nil
+	})
+	defer restore()
+
+	patch, err := (&Server{githubHost: "github.example.com"}).pullRequestPatch(
+		context.Background(),
+		"org",
+		"repo",
+		"123",
+	)
+	if err != nil {
+		t.Fatalf("pullRequestPatch() error = %v", err)
+	}
+	if patch != "diff --git a/tracked.txt b/tracked.txt\n" {
+		t.Fatalf("pullRequestPatch() = %q", patch)
+	}
+	for _, want := range []string{
+		"repos/org/repo/pulls/123",
+		"--hostname",
+		"github.example.com",
+		"Accept: application/vnd.github.v3.diff",
+	} {
+		if !containsArg(gotArgs, want) {
+			t.Fatalf("gh args missing %q: %v", want, gotArgs)
+		}
+	}
+	if containsArg(gotArgs, "Accept: application/vnd.github.v3.patch") {
+		t.Fatalf("gh args should request final diff, not patch: %v", gotArgs)
+	}
+}
+
 func TestHandleBranchDiffRejectsMissingOrUnsafeBase(t *testing.T) {
 	srv := &Server{cwd: t.TempDir()}
 	cases := []struct {
