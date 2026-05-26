@@ -13,6 +13,7 @@ import (
 )
 
 func newBranchCommand(opts *cliOptions, started time.Time) *cobra.Command {
+	var includeDirty bool
 	cmd := &cobra.Command{
 		Use:   "branch [base]",
 		Short: "Review commits on the current branch against a base",
@@ -33,12 +34,22 @@ func newBranchCommand(opts *cliOptions, started time.Time) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target := "/branch?base=" + url.QueryEscape(base)
+			target := branchTarget(base, includeDirty)
 			return runServerTarget(cmd, opts, target, started)
 		},
 	}
 	addServeFlags(cmd, opts, false)
+	cmd.Flags().BoolVar(&includeDirty, "include-dirty", false, "include staged, unstaged, and untracked changes")
 	return cmd
+}
+
+func branchTarget(base string, includeDirty bool) string {
+	values := url.Values{}
+	values.Set("base", base)
+	if includeDirty {
+		values.Set("dirty", "1")
+	}
+	return "/branch?" + values.Encode()
 }
 
 func resolveBranchBase(args []string, dir string) (string, error) {

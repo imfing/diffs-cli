@@ -191,7 +191,7 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid base ref: %q", base))
 		return
 	}
-	patch, err := s.branchDiff(r.Context(), base)
+	patch, err := s.branchDiff(r.Context(), base, branchDirtyEnabled(r.URL.Query().Get("dirty")))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -505,9 +505,13 @@ func (s *Server) localDiff(ctx context.Context) (string, error) {
 	return patch.String(), nil
 }
 
-func (s *Server) branchDiff(ctx context.Context, base string) (string, error) {
+func (s *Server) branchDiff(ctx context.Context, base string, includeDirty bool) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+
+	if includeDirty {
+		return s.branchDiffWithDirty(ctx, base)
+	}
 
 	out, err := s.gitOutput(ctx, "git diff",
 		"diff", "--no-ext-diff", "--patch", "--submodule=diff", base+"...HEAD", "--")
@@ -515,6 +519,43 @@ func (s *Server) branchDiff(ctx context.Context, base string) (string, error) {
 		return "", err
 	}
 	return out, nil
+}
+
+func (s *Server) branchDiffWithDirty(ctx context.Context, base string) (string, error) {
+	mergeBase, err := s.gitOutput(ctx, "git merge-base", "merge-base", base, "HEAD")
+	if err != nil {
+		return "", err
+	}
+	mergeBase = strings.TrimSpace(mergeBase)
+	if mergeBase == "" {
+		return "", errors.New("git merge-base returned an empty ref")
+	}
+
+	// Compare merge base directly to the working tree so dirty edits replace,
+	// rather than duplicate, committed branch hunks for the same file.
+	out, err := s.gitOutput(ctx, "git diff",
+		"diff", "--no-ext-diff", "--patch", "--submodule=diff", mergeBase, "--")
+	if err != nil {
+		return "", err
+	}
+
+	var patch strings.Builder
+	appendPatch(&patch, out)
+	untracked, err := s.untrackedPatch(ctx)
+	if err != nil {
+		return "", err
+	}
+	appendPatch(&patch, untracked)
+	return patch.String(), nil
+}
+
+func branchDirtyEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // isSafeRefArg rejects revision expressions and strings git could misinterpret

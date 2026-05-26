@@ -172,12 +172,55 @@ func TestBranchDiffComparesAgainstBase(t *testing.T) {
 	git(t, dir, "add", "tracked.txt")
 	git(t, dir, "commit", "-m", "two")
 
-	patch, err := (&Server{cwd: dir}).branchDiff(context.Background(), "main")
+	patch, err := (&Server{cwd: dir}).branchDiff(context.Background(), "main", false)
 	if err != nil {
 		t.Fatalf("branchDiff() error = %v", err)
 	}
 	if !strings.Contains(patch, "+two") {
 		t.Fatalf("branchDiff() missing %q in patch:\n%s", "+two", patch)
+	}
+}
+
+func TestBranchDiffWithDirtyIncludesFinalWorkingTreeAndUntrackedFiles(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
+	writeFile(t, filepath.Join(dir, "staged.txt"), "old\n")
+	git(t, dir, "add", "tracked.txt", "staged.txt")
+	git(t, dir, "commit", "-m", "init")
+	git(t, dir, "checkout", "-b", "feat")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\ntwo\n")
+	git(t, dir, "add", "tracked.txt")
+	git(t, dir, "commit", "-m", "two")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\nthree\n")
+	writeFile(t, filepath.Join(dir, "staged.txt"), "changed\n")
+	git(t, dir, "add", "staged.txt")
+	writeFile(t, filepath.Join(dir, "untracked.txt"), "hello\n")
+
+	cleanPatch, err := (&Server{cwd: dir}).branchDiff(context.Background(), "main", false)
+	if err != nil {
+		t.Fatalf("branchDiff(clean) error = %v", err)
+	}
+	if !strings.Contains(cleanPatch, "+two") || strings.Contains(cleanPatch, "+three") {
+		t.Fatalf("branchDiff(clean) should only show committed branch changes:\n%s", cleanPatch)
+	}
+
+	dirtyPatch, err := (&Server{cwd: dir}).branchDiff(context.Background(), "main", true)
+	if err != nil {
+		t.Fatalf("branchDiff(dirty) error = %v", err)
+	}
+	for _, want := range []string{
+		"+three",
+		"+changed",
+		"diff --git a/untracked.txt b/untracked.txt",
+		"+hello",
+	} {
+		if !strings.Contains(dirtyPatch, want) {
+			t.Fatalf("branchDiff(dirty) missing %q in patch:\n%s", want, dirtyPatch)
+		}
+	}
+	if strings.Contains(dirtyPatch, "+two") {
+		t.Fatalf("branchDiff(dirty) should show final working tree content, not stale HEAD content:\n%s", dirtyPatch)
 	}
 }
 

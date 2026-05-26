@@ -193,6 +193,15 @@ func TestResolveBranchBaseUsesExplicitArgument(t *testing.T) {
 	}
 }
 
+func TestBranchTargetIncludesDirtyFlag(t *testing.T) {
+	if got := branchTarget("origin/main", false); got != "/branch?base=origin%2Fmain" {
+		t.Fatalf("branchTarget(clean) = %q", got)
+	}
+	if got := branchTarget("origin/main", true); got != "/branch?base=origin%2Fmain&dirty=1" {
+		t.Fatalf("branchTarget(dirty) = %q", got)
+	}
+}
+
 func TestResolveBranchBasePrefersPRBase(t *testing.T) {
 	stubGHPRBaseRef(t, func(context.Context, string) (string, error) { return "develop", nil })
 	stubGHRepoDefaultBranch(t, ghFails("should not be called"))
@@ -825,6 +834,30 @@ func TestPRCommandHelp(t *testing.T) {
 	}
 	if strings.Contains(got, "--github-host") {
 		t.Fatalf("pr help output should not include removed flag --github-host:\n%s", got)
+	}
+}
+
+func TestBranchCommandHelp(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newRootCommand(time.Time{})
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"branch", "--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("branch help failed: %v", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"diffs branch [base]",
+		"--include-dirty",
+		"--host string",
+		"--port int",
+		"--dir string",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("branch help output missing %q in:\n%s", want, got)
+		}
 	}
 }
 

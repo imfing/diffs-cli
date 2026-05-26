@@ -50,6 +50,7 @@ Review the current branch against a base locally:
 ```sh
 diffs branch          # infers the base
 diffs branch main     # explicit base
+diffs branch --include-dirty  # include staged, unstaged, and untracked changes
 ```
 
 Common flags:
