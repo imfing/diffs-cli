@@ -338,6 +338,52 @@ func TestEventsStreamOnLocalFileChange(t *testing.T) {
 	}
 }
 
+func TestEventsStreamOnGitCommit(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\n")
+	git(t, dir, "add", "tracked.txt")
+	git(t, dir, "commit", "-m", "init")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "one\ntwo\n")
+	git(t, dir, "add", "tracked.txt")
+
+	handler, err := New(Config{CWD: dir, Watch: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	seen := make(chan struct{}, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.TrimSpace(scanner.Text()) == "event: diff" {
+				seen <- struct{}{}
+				return
+			}
+		}
+	}()
+
+	git(t, dir, "commit", "-m", "two")
+
+	select {
+	case <-seen:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for diff event after commit")
+	}
+}
+
 func TestOnChangeRunsOnLocalFileChange(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init")

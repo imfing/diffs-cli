@@ -95,6 +95,7 @@ func New(cfg Config) (http.Handler, error) {
 	}
 	events := newChangeBroadcaster()
 	notifyChange := func(paths []string) {
+		gitStateChanged := hasGitStateEvent(paths)
 		status, err := gitStatus(absCWD)
 		var changed []ChangedFile
 		if err == nil {
@@ -103,6 +104,12 @@ func New(cfg Config) (http.Handler, error) {
 			changed = changedFilesFromEvents(paths)
 		}
 		if len(changed) == 0 {
+			if gitStateChanged {
+				events.broadcast()
+				if cfg.OnChange != nil {
+					cfg.OnChange(nil)
+				}
+			}
 			return
 		}
 		events.broadcast()

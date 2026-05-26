@@ -17,6 +17,7 @@ import (
 const (
 	watchDebounce    = 150 * time.Millisecond
 	gitStatusTimeout = 2 * time.Second
+	gitStateEvent    = ".git"
 )
 
 type changeBroadcaster struct {
@@ -57,6 +58,7 @@ func (b *changeBroadcaster) broadcast() {
 
 type localWatcher struct {
 	cwd     string
+	gitDir  string
 	watcher *fsnotify.Watcher
 
 	mu      sync.Mutex
@@ -92,6 +94,8 @@ func newLocalWatcher(cwd string, notify func([]string)) (*localWatcher, error) {
 		_ = watcher.Close()
 		return nil, err
 	}
+	w.gitDir = absoluteGitDir(cwd)
+	w.addGitStateDirs()
 
 	go w.run(notify)
 	return w, nil
@@ -125,6 +129,15 @@ func (w *localWatcher) run(notify func([]string)) {
 					timer.Stop()
 				}
 				return
+			}
+			if w.isGitStateEvent(event.Name) {
+				if event.Has(fsnotify.Create) {
+					w.addGitStateDirRecursive(event.Name)
+				}
+				if w.shouldSchedule(event) {
+					schedule(gitStateEvent)
+				}
+				continue
 			}
 			if w.ignore(event.Name) {
 				continue
@@ -196,6 +209,53 @@ func (w *localWatcher) addDir(name string) error {
 	return nil
 }
 
+func (w *localWatcher) addGitStateDirs() {
+	if w.gitDir == "" {
+		return
+	}
+	for _, dir := range []string{
+		w.gitDir,
+		filepath.Join(w.gitDir, "refs"),
+		filepath.Join(w.gitDir, "logs"),
+	} {
+		w.addGitStateDirRecursive(dir)
+	}
+}
+
+func (w *localWatcher) addGitStateDirRecursive(root string) {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	_ = filepath.WalkDir(root, func(name string, entry os.DirEntry, err error) error {
+		if err != nil || !entry.IsDir() {
+			return nil
+		}
+		_ = w.addDir(name)
+		return nil
+	})
+}
+
+func (w *localWatcher) isGitStateEvent(name string) bool {
+	if w.gitDir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(w.gitDir, name)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	part := strings.Split(rel, string(filepath.Separator))[0]
+	switch part {
+	case "HEAD", "index", "index.lock", "packed-refs", "packed-refs.lock", "refs", "logs", "COMMIT_EDITMSG":
+		return true
+	default:
+		return false
+	}
+}
+
 func (w *localWatcher) ignore(name string) bool {
 	if w.isCommentTempFile(name) {
 		return true
@@ -230,6 +290,17 @@ func sortedKeys(values map[string]struct{}) []string {
 	return slices.Sorted(maps.Keys(values))
 }
 
+func absoluteGitDir(cwd string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), gitcmd.DefaultTimeout)
+	defer cancel()
+
+	out, err := gitcmd.Run(ctx, cwd, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func gitStatus(cwd string) (map[string]ChangeAction, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
@@ -261,6 +332,10 @@ func gitStatus(cwd string) (map[string]ChangeAction, error) {
 		statusByPath[filepath.ToSlash(path)] = gitStatusAction(status)
 	}
 	return statusByPath, nil
+}
+
+func hasGitStateEvent(events []string) bool {
+	return slices.Contains(events, gitStateEvent)
 }
 
 func changedFilesForEvents(events []string, statusByPath map[string]ChangeAction) []ChangedFile {
