@@ -83,6 +83,20 @@ function patchCacheKeyPrefix(patch: string): string {
   return (h >>> 0).toString(36);
 }
 
+function readCollapsedPaths(key: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsedPaths(key: string, paths: Set<string>) {
+  sessionStorage.setItem(key, JSON.stringify([...paths]));
+}
+
 function annotationsChanged(
   current: readonly { lineNumber: number; side?: string; metadata?: AnnotationMeta }[] | undefined,
   next: readonly { lineNumber: number; side?: string; metadata?: AnnotationMeta }[],
@@ -147,6 +161,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   }>();
   const [searchParams] = useSearchParams();
   const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
+  const includeDirty = source === "branch" && searchParams.get("dirty") === "1";
 
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
   const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(
@@ -154,7 +169,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   );
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
-  const [allCollapsed, setAllCollapsed] = useState(false);
+  const [allCollapsedOverride, setAllCollapsed] = useState<boolean | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showBackground, setShowBackground] = useState(
     () => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true,
@@ -167,6 +182,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
+  const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
@@ -183,6 +199,13 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const isLocal = source === "local";
   const isBranch = source === "branch";
   const usesLocalStore = isLocal || isBranch;
+  const sessionKey = isLocal
+    ? "local"
+    : isBranch
+      ? `branch:${baseRef}`
+      : `pr:${org}/${repo}/${number}`;
+  const scrollStorageKey = `diffs-scroll:${sessionKey}`;
+  const collapsedStorageKey = `diffs-collapsed:${sessionKey}`;
   const prUrl =
     org && repo && number ? `https://${config.githubHost}/${org}/${repo}/pull/${number}` : "";
   const commentsEndpoint = usesLocalStore
@@ -272,7 +295,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
     const load = () => {
       const endpoint = isBranch
-        ? `/api/branch-diff?base=${encodeURIComponent(baseRef)}`
+        ? `/api/branch-diff?base=${encodeURIComponent(baseRef)}${includeDirty ? "&dirty=1" : ""}`
         : isLocal
           ? "/api/local-diff"
           : `/api/patch/${org}/${repo}/${number}`;
@@ -313,7 +336,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       eventSource?.close();
       if (fallbackInterval != null) window.clearInterval(fallbackInterval);
     };
-  }, [isLocal, isBranch, usesLocalStore, baseRef, org, repo, number]);
+  }, [isLocal, isBranch, usesLocalStore, baseRef, includeDirty, org, repo, number]);
 
   useEffect(() => {
     if (pullRequestInfoEndpoint == null) return;
@@ -368,10 +391,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     pullRequestInfo?.endpoint === pullRequestInfoEndpoint ? pullRequestInfo.info : null;
 
   const filePaths = useMemo(() => [...new Set(files.map((f) => f.name))], [files]);
-  const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(
-    () => files.map((f, i) => ({ id: `diff:${f.name}:${i}`, type: "diff" as const, fileDiff: f })),
-    [files],
-  );
+  const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
+    const collapsed = readCollapsedPaths(collapsedStorageKey);
+    return files.map((f, i) => ({
+      id: `diff:${f.name}:${i}`,
+      type: "diff" as const,
+      fileDiff: f,
+      ...(collapsed.has(f.name) ? { collapsed: true } : {}),
+    }));
+  }, [files, collapsedStorageKey]);
   const filePathToItemId = useMemo(() => {
     const map = new Map<string, string>();
     for (let i = 0; i < files.length; i++) {
@@ -388,6 +416,41 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   useEffect(() => {
     void workerPool?.setRenderOptions({ theme: selectedDiffTheme.theme });
   }, [workerPool, selectedDiffTheme.theme]);
+  const allCollapsed =
+    allCollapsedOverride ??
+    (initialItems.length > 0 && initialItems.every((item) => item.collapsed));
+  useEffect(() => {
+    const area = codeViewAreaRef.current;
+    if (!area) return;
+
+    let timer = 0;
+    const handleScroll = (e: Event) => {
+      const el = e.target as HTMLElement;
+      if (timer) clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        sessionStorage.setItem(scrollStorageKey, String(el.scrollTop));
+      }, 150);
+    };
+    area.addEventListener("scroll", handleScroll, { capture: true, passive: true });
+
+    const saved = sessionStorage.getItem(scrollStorageKey);
+    if (saved) {
+      const target = parseInt(saved, 10);
+      if (target > 0) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const scrollEl = area.firstElementChild as HTMLElement;
+            if (scrollEl) scrollEl.scrollTop = target;
+          });
+        });
+      }
+    }
+
+    return () => {
+      area.removeEventListener("scroll", handleScroll, { capture: true });
+      if (timer) clearTimeout(timer);
+    };
+  }, [scrollStorageKey, codeViewKey]);
   const scrollToFile = useCallback(
     (path: string) => {
       const itemId = filePathToItemId.get(path);
@@ -431,28 +494,41 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     }
     setSidebarOpen((open) => !open);
   }, []);
-  const toggleFileCollapsed = useCallback((itemId: string) => {
-    const viewer = viewerRef.current;
-    const item = viewer?.getItem(itemId);
-    if (item == null) return;
-    viewer!.updateItem({
-      ...item,
-      version: (item.version ?? 0) + 1,
-      collapsed: !item.collapsed,
-    });
-  }, []);
+  const toggleFileCollapsed = useCallback(
+    (itemId: string) => {
+      const viewer = viewerRef.current;
+      const item = viewer?.getItem(itemId);
+      if (item == null) return;
+      const nextCollapsed = !item.collapsed;
+      viewer!.updateItem({
+        ...item,
+        version: (item.version ?? 0) + 1,
+        collapsed: nextCollapsed,
+      });
+      if (item.type === "diff" && item.fileDiff) {
+        const stored = readCollapsedPaths(collapsedStorageKey);
+        if (nextCollapsed) stored.add(item.fileDiff.name);
+        else stored.delete(item.fileDiff.name);
+        persistCollapsedPaths(collapsedStorageKey, stored);
+      }
+    },
+    [collapsedStorageKey],
+  );
   const toggleAllFilesCollapsed = useCallback(() => {
     const next = !allCollapsed;
     setAllCollapsed(next);
     const viewer = viewerRef.current;
     if (!viewer) return;
+    const collapsedPaths = new Set<string>();
     for (const item of initialItems) {
       const current = viewer.getItem(item.id);
       if (current && current.collapsed !== next) {
         viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: next });
       }
+      if (next && item.type === "diff" && item.fileDiff) collapsedPaths.add(item.fileDiff.name);
     }
-  }, [allCollapsed, initialItems]);
+    persistCollapsedPaths(collapsedStorageKey, collapsedPaths);
+  }, [allCollapsed, initialItems, collapsedStorageKey]);
   const handleColorSchemeChange = useCallback((value: AppColorScheme) => {
     setAppColorScheme(value);
     persistColorScheme(value);
@@ -788,17 +864,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             </MobileSidebarDrawer>
           </Suspense>
         )}
-        <CodeView<AnnotationMeta>
-          key={codeViewKey}
-          ref={viewerRef}
-          initialItems={initialItems}
-          selectedLines={selectedLines}
-          onSelectedLinesChange={setSelectedLines}
-          style={codeViewStyle}
-          options={codeViewOptions}
-          renderAnnotation={renderAnnotation}
-          renderHeaderPrefix={renderHeaderPrefix}
-        />
+        <div ref={codeViewAreaRef} className="flex min-w-0 flex-1">
+          <CodeView<AnnotationMeta>
+            key={codeViewKey}
+            ref={viewerRef}
+            initialItems={initialItems}
+            selectedLines={selectedLines}
+            onSelectedLinesChange={setSelectedLines}
+            style={codeViewStyle}
+            options={codeViewOptions}
+            renderAnnotation={renderAnnotation}
+            renderHeaderPrefix={renderHeaderPrefix}
+          />
+        </div>
       </div>
     </div>
   );
