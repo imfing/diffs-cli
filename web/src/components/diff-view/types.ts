@@ -32,6 +32,7 @@ export type PatchLoadState = {
 };
 
 export type AppConfig = {
+  codeFontFamily?: string;
   colorScheme?: string;
   diffStyle?: string;
   diffTheme?: string;
@@ -40,6 +41,7 @@ export type AppConfig = {
   githubHost: string;
   lineBackgrounds?: boolean;
   lineNumbers?: boolean;
+  uiFontFamily?: string;
   wordWrap?: boolean;
 };
 

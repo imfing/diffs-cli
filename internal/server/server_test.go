@@ -71,6 +71,8 @@ func TestConfigIncludesUISettingsWhenConfigured(t *testing.T) {
 			ColorScheme:     "dark",
 			DiffTheme:       "github",
 			DiffStyle:       "unified",
+			UIFontFamily:    `"Inter Variable", system-ui, sans-serif`,
+			CodeFontFamily:  `"JetBrains Mono", ui-monospace, monospace`,
 			WordWrap:        &wordWrap,
 			LineNumbers:     &lineNumbers,
 			LineBackgrounds: &lineBackgrounds,
@@ -90,6 +92,8 @@ func TestConfigIncludesUISettingsWhenConfigured(t *testing.T) {
 		ColorScheme     string `json:"colorScheme"`
 		DiffTheme       string `json:"diffTheme"`
 		DiffStyle       string `json:"diffStyle"`
+		UIFontFamily    string `json:"uiFontFamily"`
+		CodeFontFamily  string `json:"codeFontFamily"`
 		WordWrap        bool   `json:"wordWrap"`
 		LineNumbers     bool   `json:"lineNumbers"`
 		LineBackgrounds bool   `json:"lineBackgrounds"`
@@ -102,6 +106,9 @@ func TestConfigIncludesUISettingsWhenConfigured(t *testing.T) {
 	}
 	if got.DiffTheme != "github" || got.DiffStyle != "unified" || !got.WordWrap || got.LineNumbers || !got.LineBackgrounds {
 		t.Fatalf("unexpected UI config: %+v", got)
+	}
+	if got.UIFontFamily != `"Inter Variable", system-ui, sans-serif` || got.CodeFontFamily != `"JetBrains Mono", ui-monospace, monospace` {
+		t.Fatalf("unexpected font config: %+v", got)
 	}
 }
 

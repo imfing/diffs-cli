@@ -56,6 +56,8 @@ const STORAGE_DIFF_STYLE = "diffs-diff-style";
 const STORAGE_WORD_WRAP = "diffs-word-wrap";
 const STORAGE_LINE_NUMBERS = "diffs-line-numbers";
 const STORAGE_LINE_BACKGROUNDS = "diffs-line-backgrounds";
+const DEFAULT_UI_FONT_FAMILY = `"Inter Variable", sans-serif`;
+const DEFAULT_CODE_FONT_FAMILY = `"JetBrains Mono", ui-monospace, Consolas, monospace`;
 
 function readStoredBool(key: string): boolean | null {
   const value = localStorage.getItem(key);
@@ -95,6 +97,27 @@ function readCollapsedPaths(key: string): Set<string> {
 
 function persistCollapsedPaths(key: string, paths: Set<string>) {
   sessionStorage.setItem(key, JSON.stringify([...paths]));
+}
+
+function prependFontFamily(value: string | undefined, fallback: string): string | undefined {
+  const preferred = value?.trim();
+  return preferred ? `${preferred}, ${fallback}` : undefined;
+}
+
+function applyConfigFontFamilies(config: AppConfig) {
+  const root = document.documentElement;
+  const uiFontFamily = prependFontFamily(config.uiFontFamily, DEFAULT_UI_FONT_FAMILY);
+  const codeFontFamily = prependFontFamily(config.codeFontFamily, DEFAULT_CODE_FONT_FAMILY);
+  const fontVars = [
+    ["--font-sans", uiFontFamily],
+    ["--font-mono", codeFontFamily],
+    ["--diffs-font-family", codeFontFamily],
+  ] as const;
+
+  for (const [name, value] of fontVars) {
+    if (value) root.style.setProperty(name, value);
+    else root.style.removeProperty(name);
+  }
 }
 
 function annotationsChanged(
@@ -235,6 +258,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     apiFetch<AppConfig>("/api/config")
       .then((nextConfig) => {
         if (ignore) return;
+        applyConfigFontFamilies(nextConfig);
         setConfig(nextConfig);
         if (isAppColorScheme(nextConfig.colorScheme) && storedColorScheme() == null) {
           setAppColorScheme(nextConfig.colorScheme);

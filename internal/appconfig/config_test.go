@@ -23,6 +23,8 @@ func TestLoadConfig(t *testing.T) {
 color_scheme = "dark"
 diff_theme = "github"
 diff_style = "unified"
+ui_font_family = '"Inter Variable", system-ui, sans-serif'
+code_font_family = '"JetBrains Mono", ui-monospace, monospace'
 word_wrap = true
 line_numbers = false
 line_backgrounds = true
@@ -36,6 +38,12 @@ line_backgrounds = true
 	}
 	if cfg.UI.ColorScheme != "dark" || cfg.UI.DiffTheme != "github" || cfg.UI.DiffStyle != "unified" {
 		t.Fatalf("unexpected string settings: %+v", cfg.UI)
+	}
+	if cfg.UI.UIFontFamily != `"Inter Variable", system-ui, sans-serif` {
+		t.Fatalf("ui_font_family = %q", cfg.UI.UIFontFamily)
+	}
+	if cfg.UI.CodeFontFamily != `"JetBrains Mono", ui-monospace, monospace` {
+		t.Fatalf("code_font_family = %q", cfg.UI.CodeFontFamily)
 	}
 	if cfg.UI.WordWrap == nil || !*cfg.UI.WordWrap {
 		t.Fatalf("word_wrap = %v, want true", cfg.UI.WordWrap)
@@ -60,12 +68,17 @@ func TestLoadInvalidConfigReturnsError(t *testing.T) {
 
 func TestNormalizeUIConfigTrimsStringSettings(t *testing.T) {
 	got := NormalizeUIConfig(UIConfig{
-		ColorScheme: " dark ",
-		DiffTheme:   " github ",
-		DiffStyle:   " unified ",
+		ColorScheme:    " dark ",
+		DiffTheme:      " github ",
+		DiffStyle:      " unified ",
+		UIFontFamily:   " ui-sans-serif ",
+		CodeFontFamily: " ui-monospace ",
 	})
 	if got.ColorScheme != ColorSchemeDark || got.DiffTheme != DiffThemeGitHub || got.DiffStyle != DiffStyleUnified {
 		t.Fatalf("NormalizeUIConfig() = %+v", got)
+	}
+	if got.UIFontFamily != "ui-sans-serif" || got.CodeFontFamily != "ui-monospace" {
+		t.Fatalf("NormalizeUIConfig() font families = %+v", got)
 	}
 }
 

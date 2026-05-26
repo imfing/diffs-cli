@@ -60,6 +60,8 @@ type UIConfig struct {
 	ColorScheme     string `toml:"color_scheme"`
 	DiffTheme       string `toml:"diff_theme"`
 	DiffStyle       string `toml:"diff_style"`
+	UIFontFamily    string `toml:"ui_font_family"`
+	CodeFontFamily  string `toml:"code_font_family"`
 	WordWrap        *bool  `toml:"word_wrap"`
 	LineNumbers     *bool  `toml:"line_numbers"`
 	LineBackgrounds *bool  `toml:"line_backgrounds"`
@@ -100,6 +102,8 @@ func NormalizeUIConfig(ui UIConfig) UIConfig {
 	ui.ColorScheme = strings.TrimSpace(ui.ColorScheme)
 	ui.DiffTheme = strings.TrimSpace(ui.DiffTheme)
 	ui.DiffStyle = strings.TrimSpace(ui.DiffStyle)
+	ui.UIFontFamily = strings.TrimSpace(ui.UIFontFamily)
+	ui.CodeFontFamily = strings.TrimSpace(ui.CodeFontFamily)
 	return ui
 }
 

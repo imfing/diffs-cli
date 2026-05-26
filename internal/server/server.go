@@ -54,6 +54,8 @@ type configResponse struct {
 	ColorScheme     string `json:"colorScheme,omitempty"`
 	DiffTheme       string `json:"diffTheme,omitempty"`
 	DiffStyle       string `json:"diffStyle,omitempty"`
+	UIFontFamily    string `json:"uiFontFamily,omitempty"`
+	CodeFontFamily  string `json:"codeFontFamily,omitempty"`
 	WordWrap        *bool  `json:"wordWrap,omitempty"`
 	LineNumbers     *bool  `json:"lineNumbers,omitempty"`
 	LineBackgrounds *bool  `json:"lineBackgrounds,omitempty"`
@@ -165,6 +167,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if appconfig.IsDiffStyle(s.ui.DiffStyle) {
 		config.DiffStyle = s.ui.DiffStyle
+	}
+	if s.ui.UIFontFamily != "" {
+		config.UIFontFamily = s.ui.UIFontFamily
+	}
+	if s.ui.CodeFontFamily != "" {
+		config.CodeFontFamily = s.ui.CodeFontFamily
 	}
 	if s.ui.WordWrap != nil {
 		config.WordWrap = s.ui.WordWrap
