@@ -74,7 +74,8 @@ function fileExtension(name: string): string {
 }
 
 // Returns a new array sorted by the chosen field. Files with equal primary keys
-// fall back to an ascending path comparison so ordering stays stable.
+// fall back to a path comparison in the same direction so the whole list reads
+// consistently (e.g. a descending sort never has ascending name runs inside it).
 export function sortFiles(
   files: readonly FileDiffMetadata[],
   orderBy: DiffOrderBy,
@@ -87,8 +88,8 @@ export function sortFiles(
     return a.name.localeCompare(b.name);
   };
   return [...files].sort((a, b) => {
-    const result = primary(a, b) * sign;
-    return result !== 0 ? result : a.name.localeCompare(b.name);
+    const result = primary(a, b);
+    return (result !== 0 ? result : a.name.localeCompare(b.name)) * sign;
   });
 }
 

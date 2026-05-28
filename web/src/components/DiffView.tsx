@@ -184,6 +184,27 @@ function fileDiffSignature(file: FileDiffMetadata): string {
   return (h >>> 0).toString(36);
 }
 
+// Single source of truth for whether a file should render collapsed. A file
+// collapses if the user manually collapsed it, it is reviewed, or the
+// "collapse removals" setting applies to a deleted file. Every place that sets
+// `collapsed` imperatively routes through here so the three independent reasons
+// can't clobber one another (e.g. un-reviewing a deleted file must keep it
+// collapsed while "collapse removals" is on).
+function computeCollapsed(
+  file: FileDiffMetadata,
+  manualCollapsed: Set<string>,
+  reviewedSignatures: Map<string, string>,
+  signature: string | undefined,
+  collapseRemovals: boolean,
+): boolean {
+  const isReviewed = signature != null && reviewedSignatures.get(file.name) === signature;
+  return (
+    manualCollapsed.has(file.name) ||
+    isReviewed ||
+    (collapseRemovals && file.type === "deleted")
+  );
+}
+
 function prependFontFamily(value: string | undefined, fallback: string): string | undefined {
   const preferred = value?.trim();
   return preferred ? `${preferred}, ${fallback}` : undefined;
@@ -555,17 +576,14 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     // Build ids from the full file index so they stay stable regardless of which
     // files are hidden, then drop the hidden ones from the rendered list.
     return files
-      .map((f, i) => {
-        const sig = fileSignatures.get(f.name);
-        const isReviewed = sig != null && reviewedSigs.get(f.name) === sig;
-        const isRemoval = collapseRemovals && f.type === "deleted";
-        return {
-          id: `diff:${f.name}:${i}`,
-          type: "diff" as const,
-          fileDiff: f,
-          ...(collapsed.has(f.name) || isReviewed || isRemoval ? { collapsed: true } : {}),
-        };
-      })
+      .map((f, i) => ({
+        id: `diff:${f.name}:${i}`,
+        type: "diff" as const,
+        fileDiff: f,
+        ...(computeCollapsed(f, collapsed, reviewedSigs, fileSignatures.get(f.name), collapseRemovals)
+          ? { collapsed: true }
+          : {}),
+      }))
       .filter((item) => !hiddenReviewedNames.has(item.fileDiff.name));
   }, [
     files,
@@ -575,13 +593,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     collapseRemovals,
     hiddenReviewedNames,
   ]);
+  // Maps each visible file to its CodeView item id. Ids keep the full-array
+  // index so they match `initialItems`, but hidden (reviewed) files are omitted
+  // so scroll/selection targets for them resolve to undefined and no-op instead
+  // of leaving a stale selection pointing at an unmounted item.
   const filePathToItemId = useMemo(() => {
     const map = new Map<string, string>();
     for (let i = 0; i < files.length; i++) {
-      if (!map.has(files[i].name)) map.set(files[i].name, `diff:${files[i].name}:${i}`);
+      const name = files[i].name;
+      if (hiddenReviewedNames.has(name) || map.has(name)) continue;
+      map.set(name, `diff:${name}:${i}`);
     }
     return map;
-  }, [files]);
+  }, [files, hiddenReviewedNames]);
   const selectedDiffTheme = useMemo(
     () => diffThemeOptions.find((option) => option.id === diffThemeId) ?? diffThemeOptions[0],
     [diffThemeId],
@@ -721,14 +745,21 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       else map.delete(name);
       persistReviewedSignatures(reviewedStorageKey, map);
       setReviewed({ key: reviewedStorageKey, map });
-      // Reviewing collapses the file; un-reviewing expands it.
+      // Reviewing collapses the file; un-reviewing only expands it when no other
+      // reason (manual collapse, collapse-removals) still applies.
       viewer!.updateItem({
         ...item,
         version: (item.version ?? 0) + 1,
-        collapsed: nextReviewed,
+        collapsed: computeCollapsed(
+          item.fileDiff,
+          readCollapsedPaths(collapsedStorageKey),
+          map,
+          sig,
+          collapseRemovals,
+        ),
       });
     },
-    [fileSignatures, reviewed, reviewedStorageKey],
+    [fileSignatures, reviewed, reviewedStorageKey, collapsedStorageKey, collapseRemovals],
   );
   const handleColorSchemeChange = useCallback((value: AppColorScheme) => {
     setAppColorScheme(value);
@@ -774,16 +805,26 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       localStorage.setItem(STORAGE_COLLAPSE_REMOVALS, String(value));
       const viewer = viewerRef.current;
       if (!viewer) return;
-      // Apply immediately to every deleted file already in the view.
+      // Apply immediately to every deleted file already in the view, but defer to
+      // the other collapse reasons so a reviewed deleted file stays collapsed.
+      const manualCollapsed = readCollapsedPaths(collapsedStorageKey);
       for (const item of initialItems) {
         if (item.type !== "diff" || item.fileDiff?.type !== "deleted") continue;
         const current = viewer.getItem(item.id);
-        if (current && current.collapsed !== value) {
-          viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: value });
+        if (!current) continue;
+        const next = computeCollapsed(
+          item.fileDiff,
+          manualCollapsed,
+          reviewed.map,
+          fileSignatures.get(item.fileDiff.name),
+          value,
+        );
+        if (current.collapsed !== next) {
+          viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: next });
         }
       }
     },
-    [initialItems],
+    [initialItems, collapsedStorageKey, reviewed, fileSignatures],
   );
   const handleHideReviewedChange = useCallback((value: boolean) => {
     setHideReviewed(value);
