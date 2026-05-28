@@ -3,6 +3,13 @@ import type { LucideIcon } from "lucide-react";
 import type { AppColorScheme } from "@/lib/colorScheme";
 
 export type DiffStyle = "split" | "unified";
+export type DiffOrderBy = "path" | "changes" | "type";
+export type DiffOrderDir = "asc" | "desc";
+
+export type DiffOrderByOption = {
+  id: DiffOrderBy;
+  label: string;
+};
 export type DiffThemeId =
   | "pierre"
   | "github"

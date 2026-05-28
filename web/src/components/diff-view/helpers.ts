@@ -1,6 +1,9 @@
-import type { SelectedLineRange } from "@pierre/diffs";
+import type { FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { Monitor, Moon, Sun } from "lucide-react";
 import type {
+  DiffOrderBy,
+  DiffOrderByOption,
+  DiffOrderDir,
   DiffStyle,
   DiffThemeId,
   DiffThemeOption,
@@ -42,6 +45,51 @@ export function isDiffThemeId(value: unknown): value is DiffThemeId {
 
 export function isDiffStyle(value: unknown): value is DiffStyle {
   return value === "split" || value === "unified";
+}
+
+export const diffOrderByOptions: readonly DiffOrderByOption[] = [
+  { id: "path", label: "Path" },
+  { id: "changes", label: "Changes" },
+  { id: "type", label: "File type" },
+];
+
+export function isDiffOrderBy(value: unknown): value is DiffOrderBy {
+  return value === "path" || value === "changes" || value === "type";
+}
+
+export function isDiffOrderDir(value: unknown): value is DiffOrderDir {
+  return value === "asc" || value === "desc";
+}
+
+function fileChangeCount(file: FileDiffMetadata): number {
+  let count = 0;
+  for (const hunk of file.hunks) count += hunk.additionLines + hunk.deletionLines;
+  return count;
+}
+
+function fileExtension(name: string): string {
+  const base = name.slice(name.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+// Returns a new array sorted by the chosen field. Files with equal primary keys
+// fall back to an ascending path comparison so ordering stays stable.
+export function sortFiles(
+  files: readonly FileDiffMetadata[],
+  orderBy: DiffOrderBy,
+  dir: DiffOrderDir,
+): FileDiffMetadata[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const primary = (a: FileDiffMetadata, b: FileDiffMetadata): number => {
+    if (orderBy === "changes") return fileChangeCount(a) - fileChangeCount(b);
+    if (orderBy === "type") return fileExtension(a.name).localeCompare(fileExtension(b.name));
+    return a.name.localeCompare(b.name);
+  };
+  return [...files].sort((a, b) => {
+    const result = primary(a, b) * sign;
+    return result !== 0 ? result : a.name.localeCompare(b.name);
+  });
 }
 
 export function selectedRangeSide(range: SelectedLineRange): "additions" | "deletions" {

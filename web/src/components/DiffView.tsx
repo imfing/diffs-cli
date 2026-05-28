@@ -18,7 +18,16 @@ import {
   watchSystemColorScheme,
   type AppColorScheme,
 } from "@/lib/colorScheme";
-import { ChevronRight, Check } from "lucide-react";
+import { ChevronRight, Check, CircleAlert, FileX2, CheckCheck } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffToolbar } from "./diff-view/DiffToolbar";
 import { SidebarTree } from "./diff-view/SidebarTree";
@@ -27,6 +36,8 @@ import type {
   AppConfig,
   CodeViewLineSelection,
   CommentTarget,
+  DiffOrderBy,
+  DiffOrderDir,
   DiffStyle,
   DiffThemeId,
   PendingCommentDraft,
@@ -36,12 +47,15 @@ import type {
 } from "./diff-view/types";
 import {
   diffThemeOptions,
+  isDiffOrderBy,
+  isDiffOrderDir,
   isDiffStyle,
   isDiffThemeId,
   localRepoTitle,
   selectedRangeEndLine,
   selectedRangeEndSide,
   selectedRangeSide,
+  sortFiles,
   threadEndLine,
   threadEndSide,
 } from "./diff-view/helpers";
@@ -57,9 +71,13 @@ const codeViewStyle = {
 
 const STORAGE_DIFF_THEME = "diff-theme";
 const STORAGE_DIFF_STYLE = "diffs-diff-style";
+const STORAGE_ORDER_BY = "diffs-order-by";
+const STORAGE_ORDER_DIR = "diffs-order-dir";
 const STORAGE_WORD_WRAP = "diffs-word-wrap";
 const STORAGE_LINE_NUMBERS = "diffs-line-numbers";
 const STORAGE_LINE_BACKGROUNDS = "diffs-line-backgrounds";
+const STORAGE_COLLAPSE_REMOVALS = "diffs-collapse-removals";
+const STORAGE_HIDE_REVIEWED = "diffs-hide-reviewed";
 const DEFAULT_UI_FONT_FAMILY = `"Inter Variable", sans-serif`;
 const DEFAULT_CODE_FONT_FAMILY = `"JetBrains Mono", ui-monospace, Consolas, monospace`;
 
@@ -78,6 +96,16 @@ function readStoredDiffStyle(): DiffStyle | null {
 function readStoredDiffTheme(): DiffThemeId | null {
   const value = localStorage.getItem(STORAGE_DIFF_THEME);
   return isDiffThemeId(value) ? value : null;
+}
+
+function readStoredOrderBy(): DiffOrderBy | null {
+  const value = localStorage.getItem(STORAGE_ORDER_BY);
+  return isDiffOrderBy(value) ? value : null;
+}
+
+function readStoredOrderDir(): DiffOrderDir | null {
+  const value = localStorage.getItem(STORAGE_ORDER_DIR);
+  return isDiffOrderDir(value) ? value : null;
 }
 
 function patchCacheKeyPrefix(patch: string): string {
@@ -244,6 +272,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const includeDirty = source === "branch" && searchParams.get("dirty") === "1";
 
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
+  const [orderBy, setOrderBy] = useState<DiffOrderBy>(() => readStoredOrderBy() ?? "path");
+  const [orderDir, setOrderDir] = useState<DiffOrderDir>(() => readStoredOrderDir() ?? "asc");
   const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(
     () => readStoredDiffTheme() ?? "pierre",
   );
@@ -258,6 +288,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     () => readStoredBool(STORAGE_LINE_NUMBERS) ?? true,
   );
   const [wordWrap, setWordWrap] = useState(() => readStoredBool(STORAGE_WORD_WRAP) ?? false);
+  const [collapseRemovals, setCollapseRemovals] = useState(
+    () => readStoredBool(STORAGE_COLLAPSE_REMOVALS) ?? false,
+  );
+  const [hideReviewed, setHideReviewed] = useState(
+    () => readStoredBool(STORAGE_HIDE_REVIEWED) ?? false,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
@@ -462,8 +498,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       effectivePatchState.patch,
       patchCacheKeyPrefix(effectivePatchState.patch),
     );
-    return parsed.flatMap((p) => p.files);
-  }, [effectivePatchState]);
+    return sortFiles(
+      parsed.flatMap((p) => p.files),
+      orderBy,
+      orderDir,
+    );
+  }, [effectivePatchState, orderBy, orderDir]);
   const fileSignatures = useMemo(() => {
     const map = new Map<string, string>();
     for (const f of files) if (!map.has(f.name)) map.set(f.name, fileDiffSignature(f));
@@ -478,7 +518,29 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   if (reviewed.key !== reviewedStorageKey) {
     setReviewed({ key: reviewedStorageKey, map: readReviewedSignatures(reviewedStorageKey) });
   }
-  const codeViewKey = effectivePatchState.patch ?? "empty";
+  // Files whose current signature still matches a reviewed signature; only
+  // populated while "Hide reviewed" is on so it stays empty (and cheap) otherwise.
+  const hiddenReviewedNames = useMemo(() => {
+    const names = new Set<string>();
+    if (!hideReviewed) return names;
+    for (const f of files) {
+      const sig = fileSignatures.get(f.name);
+      if (sig != null && reviewed.map.get(f.name) === sig) names.add(f.name);
+    }
+    return names;
+  }, [hideReviewed, files, fileSignatures, reviewed]);
+  const visibleFiles = useMemo(
+    () =>
+      hiddenReviewedNames.size === 0
+        ? files
+        : files.filter((f) => !hiddenReviewedNames.has(f.name)),
+    [files, hiddenReviewedNames],
+  );
+  // Folding the hidden set into the key remounts CodeView when files are hidden
+  // or revealed (it has no imperative removeItem); the scroll-restore effect
+  // keyed on codeViewKey puts the user back where they were.
+  const hiddenReviewedKey = [...hiddenReviewedNames].sort().join("\n");
+  const codeViewKey = `${effectivePatchState.patch ?? "empty"}:${orderBy}:${orderDir}:${hiddenReviewedKey}`;
   const pendingCommentThreads = useMemo(
     () => commentThreads.filter((thread) => thread.pending && thread.draft),
     [commentThreads],
@@ -486,21 +548,33 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const currentPullRequestInfo =
     pullRequestInfo?.endpoint === pullRequestInfoEndpoint ? pullRequestInfo.info : null;
 
-  const filePaths = useMemo(() => [...new Set(files.map((f) => f.name))], [files]);
+  const filePaths = useMemo(() => [...new Set(visibleFiles.map((f) => f.name))], [visibleFiles]);
   const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
     const collapsed = readCollapsedPaths(collapsedStorageKey);
     const reviewedSigs = readReviewedSignatures(reviewedStorageKey);
-    return files.map((f, i) => {
-      const sig = fileSignatures.get(f.name);
-      const isReviewed = sig != null && reviewedSigs.get(f.name) === sig;
-      return {
-        id: `diff:${f.name}:${i}`,
-        type: "diff" as const,
-        fileDiff: f,
-        ...(collapsed.has(f.name) || isReviewed ? { collapsed: true } : {}),
-      };
-    });
-  }, [files, collapsedStorageKey, reviewedStorageKey, fileSignatures]);
+    // Build ids from the full file index so they stay stable regardless of which
+    // files are hidden, then drop the hidden ones from the rendered list.
+    return files
+      .map((f, i) => {
+        const sig = fileSignatures.get(f.name);
+        const isReviewed = sig != null && reviewedSigs.get(f.name) === sig;
+        const isRemoval = collapseRemovals && f.type === "deleted";
+        return {
+          id: `diff:${f.name}:${i}`,
+          type: "diff" as const,
+          fileDiff: f,
+          ...(collapsed.has(f.name) || isReviewed || isRemoval ? { collapsed: true } : {}),
+        };
+      })
+      .filter((item) => !hiddenReviewedNames.has(item.fileDiff.name));
+  }, [
+    files,
+    collapsedStorageKey,
+    reviewedStorageKey,
+    fileSignatures,
+    collapseRemovals,
+    hiddenReviewedNames,
+  ]);
   const filePathToItemId = useMemo(() => {
     const map = new Map<string, string>();
     for (let i = 0; i < files.length; i++) {
@@ -671,6 +745,17 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       return next;
     });
   }, []);
+  const handleOrderByChange = useCallback((value: DiffOrderBy) => {
+    setOrderBy(value);
+    localStorage.setItem(STORAGE_ORDER_BY, value);
+  }, []);
+  const handleOrderDirToggle = useCallback(() => {
+    setOrderDir((prev) => {
+      const next: DiffOrderDir = prev === "asc" ? "desc" : "asc";
+      localStorage.setItem(STORAGE_ORDER_DIR, next);
+      return next;
+    });
+  }, []);
   const handleWordWrapChange = useCallback((value: boolean) => {
     setWordWrap(value);
     localStorage.setItem(STORAGE_WORD_WRAP, String(value));
@@ -682,6 +767,27 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const handleShowBackgroundChange = useCallback((value: boolean) => {
     setShowBackground(value);
     localStorage.setItem(STORAGE_LINE_BACKGROUNDS, String(value));
+  }, []);
+  const handleCollapseRemovalsChange = useCallback(
+    (value: boolean) => {
+      setCollapseRemovals(value);
+      localStorage.setItem(STORAGE_COLLAPSE_REMOVALS, String(value));
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+      // Apply immediately to every deleted file already in the view.
+      for (const item of initialItems) {
+        if (item.type !== "diff" || item.fileDiff?.type !== "deleted") continue;
+        const current = viewer.getItem(item.id);
+        if (current && current.collapsed !== value) {
+          viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: value });
+        }
+      }
+    },
+    [initialItems],
+  );
+  const handleHideReviewedChange = useCallback((value: boolean) => {
+    setHideReviewed(value);
+    localStorage.setItem(STORAGE_HIDE_REVIEWED, String(value));
   }, []);
 
   const clearCommentTarget = useCallback(() => {
@@ -948,11 +1054,21 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
   if (error) {
     return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-4 text-red-600">
-        <p>Failed to fetch diff: {error}</p>
-        <Link to="/" className="text-blue-500 no-underline">
-          Back
-        </Link>
+      <div className="flex h-dvh flex-col">
+        <Empty className="flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <CircleAlert />
+            </EmptyMedia>
+            <EmptyTitle>Failed to load diff</EmptyTitle>
+            <EmptyDescription>{error}</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Back
+            </Link>
+          </EmptyContent>
+        </Empty>
       </div>
     );
   }
@@ -964,18 +1080,28 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         ? "No local changes in the working tree."
         : "No files changed in this PR.";
     return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-4 text-neutral-500">
-        <p>{emptyMessage}</p>
-        <Link to="/" className="text-blue-500 no-underline">
-          Back
-        </Link>
+      <div className="flex h-dvh flex-col">
+        <Empty className="flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileX2 />
+            </EmptyMedia>
+            <EmptyTitle>No changes to show</EmptyTitle>
+            <EmptyDescription>{emptyMessage}</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Back
+            </Link>
+          </EmptyContent>
+        </Empty>
       </div>
     );
   }
 
   const sidebarTreeProps = {
     paths: filePaths,
-    files,
+    files: visibleFiles,
     comments: commentThreads,
     onFileActivate: scrollToFile,
     onCommentActivate: scrollToThread,
@@ -997,6 +1123,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         baseRef={isBranch ? baseRef : undefined}
         onColorSchemeChange={handleColorSchemeChange}
         onDiffStyleToggle={handleDiffStyleToggle}
+        orderBy={orderBy}
+        orderDir={orderDir}
+        onOrderByChange={handleOrderByChange}
+        onOrderDirToggle={handleOrderDirToggle}
         onDiffThemeChange={handleDiffThemeChange}
         onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
@@ -1005,11 +1135,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         pendingCommentCount={pendingCommentThreads.length}
         pullRequestInfo={currentPullRequestInfo}
         wordWrap={wordWrap}
+        collapseRemovals={collapseRemovals}
+        hideReviewed={hideReviewed}
         prUrl={prUrl}
         selectedDiffThemeLabel={selectedDiffTheme.label}
         setShowBackground={handleShowBackgroundChange}
         setShowLineNumbers={handleShowLineNumbersChange}
         setWordWrap={handleWordWrapChange}
+        setCollapseRemovals={handleCollapseRemovalsChange}
+        setHideReviewed={handleHideReviewedChange}
         settingsOpen={settingsOpen}
         sidebarOpen={sidebarOpen}
         submittingPendingComments={submittingPendingComments}
@@ -1029,18 +1163,41 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           </Suspense>
         )}
         <div ref={codeViewAreaRef} className="flex min-w-0 flex-1">
-          <CodeView<AnnotationMeta>
-            key={codeViewKey}
-            ref={viewerRef}
-            initialItems={initialItems}
-            selectedLines={selectedLines}
-            onSelectedLinesChange={setSelectedLines}
-            style={codeViewStyle}
-            options={codeViewOptions}
-            renderAnnotation={renderAnnotation}
-            renderHeaderPrefix={renderHeaderPrefix}
-            renderHeaderMetadata={renderHeaderMetadata}
-          />
+          {initialItems.length === 0 ? (
+            <Empty className="flex-1">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <CheckCheck />
+                </EmptyMedia>
+                <EmptyTitle>All files reviewed</EmptyTitle>
+                <EmptyDescription>
+                  Every changed file is marked as reviewed and hidden.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <button
+                  type="button"
+                  onClick={() => handleHideReviewedChange(false)}
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                >
+                  Show reviewed files
+                </button>
+              </EmptyContent>
+            </Empty>
+          ) : (
+            <CodeView<AnnotationMeta>
+              key={codeViewKey}
+              ref={viewerRef}
+              initialItems={initialItems}
+              selectedLines={selectedLines}
+              onSelectedLinesChange={setSelectedLines}
+              style={codeViewStyle}
+              options={codeViewOptions}
+              renderAnnotation={renderAnnotation}
+              renderHeaderPrefix={renderHeaderPrefix}
+              renderHeaderMetadata={renderHeaderMetadata}
+            />
+          )}
         </div>
       </div>
     </div>

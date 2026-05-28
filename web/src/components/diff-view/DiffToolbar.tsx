@@ -19,7 +19,14 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { AppColorScheme } from "@/lib/colorScheme";
-import type { AppConfig, DiffStyle, DiffThemeId, PullRequestInfo } from "./types";
+import type {
+  AppConfig,
+  DiffOrderBy,
+  DiffOrderDir,
+  DiffStyle,
+  DiffThemeId,
+  PullRequestInfo,
+} from "./types";
 import { displayLocalPath, headerIconButtonClass } from "./helpers";
 
 const DiffSettingsPopover = lazy(() =>
@@ -96,6 +103,10 @@ export function DiffToolbar({
   baseRef,
   onColorSchemeChange,
   onDiffStyleToggle,
+  orderBy,
+  orderDir,
+  onOrderByChange,
+  onOrderDirToggle,
   onDiffThemeChange,
   onSettingsOpenChange,
   onSidebarToggle,
@@ -104,11 +115,15 @@ export function DiffToolbar({
   pendingCommentCount,
   pullRequestInfo,
   wordWrap,
+  collapseRemovals,
+  hideReviewed,
   prUrl,
   selectedDiffThemeLabel,
   setShowBackground,
   setShowLineNumbers,
   setWordWrap,
+  setCollapseRemovals,
+  setHideReviewed,
   settingsOpen,
   sidebarOpen,
   submittingPendingComments,
@@ -124,6 +139,10 @@ export function DiffToolbar({
   baseRef?: string;
   onColorSchemeChange: (value: AppColorScheme) => void;
   onDiffStyleToggle: () => void;
+  orderBy: DiffOrderBy;
+  orderDir: DiffOrderDir;
+  onOrderByChange: (value: DiffOrderBy) => void;
+  onOrderDirToggle: () => void;
   onDiffThemeChange: (value: DiffThemeId) => void;
   onSettingsOpenChange: (open: boolean) => void;
   onSidebarToggle: () => void;
@@ -132,11 +151,15 @@ export function DiffToolbar({
   pendingCommentCount: number;
   pullRequestInfo: PullRequestInfo | null;
   wordWrap: boolean;
+  collapseRemovals: boolean;
+  hideReviewed: boolean;
   prUrl: string;
   selectedDiffThemeLabel: string;
   setShowBackground: (value: boolean) => void;
   setShowLineNumbers: (value: boolean) => void;
   setWordWrap: (value: boolean) => void;
+  setCollapseRemovals: (value: boolean) => void;
+  setHideReviewed: (value: boolean) => void;
   settingsOpen: boolean;
   sidebarOpen: boolean;
   submittingPendingComments: boolean;
@@ -350,6 +373,10 @@ export function DiffToolbar({
             onColorSchemeChange={onColorSchemeChange}
             diffStyle={diffStyle}
             onDiffStyleToggle={onDiffStyleToggle}
+            orderBy={orderBy}
+            orderDir={orderDir}
+            onOrderByChange={onOrderByChange}
+            onOrderDirToggle={onOrderDirToggle}
             diffThemeId={diffThemeId}
             onDiffThemeChange={onDiffThemeChange}
             selectedDiffThemeLabel={selectedDiffThemeLabel}
@@ -359,6 +386,10 @@ export function DiffToolbar({
             setShowLineNumbers={setShowLineNumbers}
             wordWrap={wordWrap}
             setWordWrap={setWordWrap}
+            collapseRemovals={collapseRemovals}
+            setCollapseRemovals={setCollapseRemovals}
+            hideReviewed={hideReviewed}
+            setHideReviewed={setHideReviewed}
           />
         </Suspense>
       </div>
