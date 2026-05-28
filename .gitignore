@@ -41,3 +41,5 @@ Thumbs.db
 !.vscode/extensions.json
 *.swp
 *.swo
+
+.agents/

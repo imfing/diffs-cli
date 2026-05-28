@@ -1,4 +1,5 @@
 import type { SelectedLineRange } from "@pierre/diffs";
+import { Monitor, Moon, Sun } from "lucide-react";
 import type {
   DiffStyle,
   DiffThemeId,
@@ -30,9 +31,9 @@ export const diffThemeOptions: readonly DiffThemeOption[] = [
 ];
 
 export const colorSchemeOptions: readonly ColorSchemeOption[] = [
-  { id: "system", label: "System" },
-  { id: "light", label: "Light" },
-  { id: "dark", label: "Dark" },
+  { id: "system", label: "System", icon: Monitor },
+  { id: "light", label: "Light", icon: Sun },
+  { id: "dark", label: "Dark", icon: Moon },
 ];
 
 export function isDiffThemeId(value: unknown): value is DiffThemeId {

@@ -2,8 +2,6 @@ import { lazy, Suspense } from "react";
 import {
   ArrowLeft,
   ExternalLink,
-  Columns2,
-  Rows2,
   PanelLeft,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -336,18 +334,6 @@ export function DiffToolbar({
           variant="ghost"
           size="icon-sm"
           className={headerIconButtonClass}
-          onClick={onDiffStyleToggle}
-          aria-label={diffStyle === "split" ? "Switch to unified view" : "Switch to split view"}
-          title={diffStyle === "split" ? "Switch to unified view" : "Switch to split view"}
-        >
-          {diffStyle === "split" ? <Rows2 /> : <Columns2 />}
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={headerIconButtonClass}
           onClick={onToggleAllCollapsed}
           aria-pressed={allCollapsed}
           aria-label={allCollapsed ? "Expand all files" : "Collapse all files"}
@@ -362,6 +348,8 @@ export function DiffToolbar({
             onOpenChange={onSettingsOpenChange}
             appColorScheme={appColorScheme}
             onColorSchemeChange={onColorSchemeChange}
+            diffStyle={diffStyle}
+            onDiffStyleToggle={onDiffStyleToggle}
             diffThemeId={diffThemeId}
             onDiffThemeChange={onDiffThemeChange}
             selectedDiffThemeLabel={selectedDiffThemeLabel}

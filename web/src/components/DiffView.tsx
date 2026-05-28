@@ -18,7 +18,7 @@ import {
   watchSystemColorScheme,
   type AppColorScheme,
 } from "@/lib/colorScheme";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Check } from "lucide-react";
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffToolbar } from "./diff-view/DiffToolbar";
 import { SidebarTree } from "./diff-view/SidebarTree";
@@ -49,7 +49,11 @@ import { apiFetch } from "@/lib/api";
 
 const MobileSidebarDrawer = lazy(() => import("./diff-view/MobileSidebarDrawer"));
 
-const codeViewStyle = { flex: 1, overflow: "auto" as const };
+const codeViewStyle = {
+  flex: 1,
+  overflow: "auto" as const,
+  scrollbarGutter: "stable" as const,
+};
 
 const STORAGE_DIFF_THEME = "diff-theme";
 const STORAGE_DIFF_STYLE = "diffs-diff-style";
@@ -97,6 +101,59 @@ function readCollapsedPaths(key: string): Set<string> {
 
 function persistCollapsedPaths(key: string, paths: Set<string>) {
   sessionStorage.setItem(key, JSON.stringify([...paths]));
+}
+
+// Reviewed state maps a file path to the signature of the diff that was
+// reviewed. A file counts as reviewed only while its current signature still
+// matches the stored one, so any change to the file's diff auto-clears it.
+function readReviewedSignatures(key: string): Map<string, string> {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return new Map(Object.entries(parsed as Record<string, string>));
+    }
+    return new Map();
+  } catch {
+    return new Map();
+  }
+}
+
+function persistReviewedSignatures(key: string, signatures: Map<string, string>) {
+  sessionStorage.setItem(key, JSON.stringify(Object.fromEntries(signatures)));
+}
+
+// Stable signature of a file's diff. Folds the git blob object IDs (parsed from
+// the patch `index` line) together with each hunk header; both change whenever
+// the file's content on either side of the diff changes.
+function fileDiffSignature(file: FileDiffMetadata): string {
+  let h = 0x811c9dc5;
+  const feed = (s: string) => {
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+  };
+  feed(file.prevObjectId ?? "");
+  feed("..");
+  feed(file.newObjectId ?? "");
+  // Object IDs are absent/zeroed for working-tree diffs, so fold the actual
+  // content lines too. For patch-parsed diffs these hold only the changed
+  // lines, keeping this bounded to the size of the diff.
+  for (const hunk of file.hunks) {
+    feed("\n@");
+    feed(hunk.hunkSpecs ?? "");
+  }
+  for (const line of file.deletionLines) {
+    feed("\n-");
+    feed(line);
+  }
+  for (const line of file.additionLines) {
+    feed("\n+");
+    feed(line);
+  }
+  return (h >>> 0).toString(36);
 }
 
 function prependFontFamily(value: string | undefined, fallback: string): string | undefined {
@@ -229,6 +286,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       : `pr:${org}/${repo}/${number}`;
   const scrollStorageKey = `diffs-scroll:${sessionKey}`;
   const collapsedStorageKey = `diffs-collapsed:${sessionKey}`;
+  const reviewedStorageKey = `diffs-reviewed:${sessionKey}`;
   const prUrl =
     org && repo && number ? `https://${config.githubHost}/${org}/${repo}/pull/${number}` : "";
   const commentsEndpoint = usesLocalStore
@@ -406,6 +464,20 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     );
     return parsed.flatMap((p) => p.files);
   }, [effectivePatchState]);
+  const fileSignatures = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const f of files) if (!map.has(f.name)) map.set(f.name, fileDiffSignature(f));
+    return map;
+  }, [files]);
+  // Reviewed signatures, reloaded synchronously whenever the storage key
+  // changes (e.g. navigating between PRs) using the render-time reset pattern.
+  const [reviewed, setReviewed] = useState<{ key: string; map: Map<string, string> }>(() => ({
+    key: reviewedStorageKey,
+    map: readReviewedSignatures(reviewedStorageKey),
+  }));
+  if (reviewed.key !== reviewedStorageKey) {
+    setReviewed({ key: reviewedStorageKey, map: readReviewedSignatures(reviewedStorageKey) });
+  }
   const codeViewKey = effectivePatchState.patch ?? "empty";
   const pendingCommentThreads = useMemo(
     () => commentThreads.filter((thread) => thread.pending && thread.draft),
@@ -417,13 +489,18 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const filePaths = useMemo(() => [...new Set(files.map((f) => f.name))], [files]);
   const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
     const collapsed = readCollapsedPaths(collapsedStorageKey);
-    return files.map((f, i) => ({
-      id: `diff:${f.name}:${i}`,
-      type: "diff" as const,
-      fileDiff: f,
-      ...(collapsed.has(f.name) ? { collapsed: true } : {}),
-    }));
-  }, [files, collapsedStorageKey]);
+    const reviewedSigs = readReviewedSignatures(reviewedStorageKey);
+    return files.map((f, i) => {
+      const sig = fileSignatures.get(f.name);
+      const isReviewed = sig != null && reviewedSigs.get(f.name) === sig;
+      return {
+        id: `diff:${f.name}:${i}`,
+        type: "diff" as const,
+        fileDiff: f,
+        ...(collapsed.has(f.name) || isReviewed ? { collapsed: true } : {}),
+      };
+    });
+  }, [files, collapsedStorageKey, reviewedStorageKey, fileSignatures]);
   const filePathToItemId = useMemo(() => {
     const map = new Map<string, string>();
     for (let i = 0; i < files.length; i++) {
@@ -553,6 +630,32 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     }
     persistCollapsedPaths(collapsedStorageKey, collapsedPaths);
   }, [allCollapsed, initialItems, collapsedStorageKey]);
+  const toggleReviewed = useCallback(
+    (itemId: string) => {
+      const viewer = viewerRef.current;
+      const item = viewer?.getItem(itemId);
+      if (item == null || item.type !== "diff" || !item.fileDiff) return;
+      const name = item.fileDiff.name;
+      const sig = fileSignatures.get(name);
+      if (sig == null) return;
+      const map = reviewed.map;
+      const nextReviewed = map.get(name) !== sig;
+      // Mutate the map in place so the header re-render triggered below (which
+      // still closes over the current `reviewed`) reads the updated value; the
+      // new wrapper object from setReviewed drives subsequent re-renders.
+      if (nextReviewed) map.set(name, sig);
+      else map.delete(name);
+      persistReviewedSignatures(reviewedStorageKey, map);
+      setReviewed({ key: reviewedStorageKey, map });
+      // Reviewing collapses the file; un-reviewing expands it.
+      viewer!.updateItem({
+        ...item,
+        version: (item.version ?? 0) + 1,
+        collapsed: nextReviewed,
+      });
+    },
+    [fileSignatures, reviewed, reviewedStorageKey],
+  );
   const handleColorSchemeChange = useCallback((value: AppColorScheme) => {
     setAppColorScheme(value);
     persistColorScheme(value);
@@ -800,6 +903,43 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     [toggleFileCollapsed],
   );
 
+  const renderHeaderMetadata = useCallback(
+    (item: CodeViewItem<AnnotationMeta>) => {
+      if (item.type !== "diff" || !item.fileDiff) return null;
+      const sig = fileSignatures.get(item.fileDiff.name);
+      const isReviewed = sig != null && reviewed.map.get(item.fileDiff.name) === sig;
+      return (
+        <label
+          title="Mark file as reviewed (collapses it)"
+          className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition-colors ${
+            isReviewed
+              ? "text-green-600 dark:text-green-400"
+              : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+          }`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span
+            className={`inline-flex size-4 items-center justify-center rounded border transition-colors ${
+              isReviewed
+                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                : "border-neutral-300 dark:border-neutral-600"
+            }`}
+          >
+            {isReviewed && <Check size={12} strokeWidth={3} />}
+          </span>
+          Reviewed
+          <input
+            type="checkbox"
+            className="sr-only"
+            checked={isReviewed}
+            onChange={() => toggleReviewed(item.id)}
+          />
+        </label>
+      );
+    },
+    [fileSignatures, reviewed, toggleReviewed],
+  );
+
   if (loading) {
     return (
       <div className="flex h-dvh items-center justify-center text-neutral-500">Loading diff...</div>
@@ -899,6 +1039,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             options={codeViewOptions}
             renderAnnotation={renderAnnotation}
             renderHeaderPrefix={renderHeaderPrefix}
+            renderHeaderMetadata={renderHeaderMetadata}
           />
         </div>
       </div>

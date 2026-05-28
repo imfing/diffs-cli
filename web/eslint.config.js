@@ -19,7 +19,10 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
-      "react-refresh/only-export-components": ["warn", { allowExportNames: ["buttonVariants"] }],
+      "react-refresh/only-export-components": [
+        "warn",
+        { allowExportNames: ["buttonVariants", "toggleVariants"] },
+      ],
     },
   },
 ]);
