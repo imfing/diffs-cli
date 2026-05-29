@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitPullRequest,
   SendHorizontal,
+  Download,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -112,6 +113,8 @@ export function DiffToolbar({
   onSidebarToggle,
   onSubmitPendingComments,
   onToggleAllCollapsed,
+  onExport,
+  exporting,
   pendingCommentCount,
   pullRequestInfo,
   wordWrap,
@@ -148,6 +151,8 @@ export function DiffToolbar({
   onSidebarToggle: () => void;
   onSubmitPendingComments: () => void;
   onToggleAllCollapsed: () => void;
+  onExport: () => void;
+  exporting: boolean;
   pendingCommentCount: number;
   pullRequestInfo: PullRequestInfo | null;
   wordWrap: boolean;
@@ -363,6 +368,19 @@ export function DiffToolbar({
           title={allCollapsed ? "Expand all files" : "Collapse all files"}
         >
           {allCollapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
+        </Button>
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className={headerIconButtonClass}
+          onClick={onExport}
+          disabled={exporting}
+          aria-label="Export as standalone HTML"
+          title="Export as standalone HTML"
+        >
+          <Download />
         </Button>
 
         <Suspense fallback={null}>

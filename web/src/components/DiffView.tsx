@@ -60,6 +60,8 @@ import {
   threadEndSide,
 } from "./diff-view/helpers";
 import { apiFetch } from "@/lib/api";
+import { exportDiffToHtml } from "@/lib/exportHtml";
+import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
 
 const MobileSidebarDrawer = lazy(() => import("./diff-view/MobileSidebarDrawer"));
 
@@ -78,8 +80,6 @@ const STORAGE_LINE_NUMBERS = "diffs-line-numbers";
 const STORAGE_LINE_BACKGROUNDS = "diffs-line-backgrounds";
 const STORAGE_COLLAPSE_REMOVALS = "diffs-collapse-removals";
 const STORAGE_HIDE_REVIEWED = "diffs-hide-reviewed";
-const DEFAULT_UI_FONT_FAMILY = `"Inter Variable", sans-serif`;
-const DEFAULT_CODE_FONT_FAMILY = `"JetBrains Mono", ui-monospace, Consolas, monospace`;
 
 function readStoredBool(key: string): boolean | null {
   const value = localStorage.getItem(key);
@@ -199,15 +199,8 @@ function computeCollapsed(
 ): boolean {
   const isReviewed = signature != null && reviewedSignatures.get(file.name) === signature;
   return (
-    manualCollapsed.has(file.name) ||
-    isReviewed ||
-    (collapseRemovals && file.type === "deleted")
+    manualCollapsed.has(file.name) || isReviewed || (collapseRemovals && file.type === "deleted")
   );
-}
-
-function prependFontFamily(value: string | undefined, fallback: string): string | undefined {
-  const preferred = value?.trim();
-  return preferred ? `${preferred}, ${fallback}` : undefined;
 }
 
 function applyConfigFontFamilies(config: AppConfig) {
@@ -318,6 +311,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
@@ -355,13 +349,14 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     !usesLocalStore && org && repo && number
       ? `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
       : null;
-  const pageTitle = isBranch
-    ? `${config.gitBranch.trim() || "HEAD"} ← ${baseRef || "base"} - diffs`
+  const baseTitle = isBranch
+    ? `${config.gitBranch.trim() || "HEAD"} ← ${baseRef || "base"}`
     : isLocal
-      ? `${localRepoTitle(config.cwd, config.gitBranch)} - diffs`
+      ? localRepoTitle(config.cwd, config.gitBranch)
       : org && repo && number
-        ? `${org}/${repo}/pull/${number} - diffs`
+        ? `${org}/${repo}/pull/${number}`
         : "diffs";
+  const pageTitle = baseTitle === "diffs" ? "diffs" : `${baseTitle} - diffs`;
   const [patchState, setPatchState] = useState<PatchLoadState>({
     error: null,
     patch: null,
@@ -580,7 +575,13 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         id: `diff:${f.name}:${i}`,
         type: "diff" as const,
         fileDiff: f,
-        ...(computeCollapsed(f, collapsed, reviewedSigs, fileSignatures.get(f.name), collapseRemovals)
+        ...(computeCollapsed(
+          f,
+          collapsed,
+          reviewedSigs,
+          fileSignatures.get(f.name),
+          collapseRemovals,
+        )
           ? { collapsed: true }
           : {}),
       }))
@@ -1016,6 +1017,41 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     ],
   );
 
+  const handleExport = useCallback(async () => {
+    if (exporting || visibleFiles.length === 0) return;
+    setExporting(true);
+    try {
+      const subtitle = isLocal ? config.cwd : isBranch ? config.gitBranch.trim() : prUrl;
+      await exportDiffToHtml({
+        files: visibleFiles,
+        options: codeViewOptions,
+        title: baseTitle,
+        subtitle,
+        dark: resolvedAppColorScheme === "dark",
+        fileName: baseTitle,
+        codeFontFamily: config.codeFontFamily,
+        uiFontFamily: config.uiFontFamily,
+      });
+    } catch (err) {
+      console.error("Failed to export diff:", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [
+    exporting,
+    visibleFiles,
+    baseTitle,
+    isLocal,
+    isBranch,
+    config.cwd,
+    config.gitBranch,
+    config.codeFontFamily,
+    config.uiFontFamily,
+    prUrl,
+    codeViewOptions,
+    resolvedAppColorScheme,
+  ]);
+
   const renderAnnotation = useCallback(
     (annotation: { metadata?: AnnotationMeta }) => (
       <DiffAnnotation
@@ -1173,6 +1209,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}
         onToggleAllCollapsed={toggleAllFilesCollapsed}
+        onExport={handleExport}
+        exporting={exporting}
         pendingCommentCount={pendingCommentThreads.length}
         pullRequestInfo={currentPullRequestInfo}
         wordWrap={wordWrap}
