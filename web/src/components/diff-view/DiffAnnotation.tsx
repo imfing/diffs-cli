@@ -1,5 +1,6 @@
 import { CommentInput } from "@/components/CommentInput";
 import { IconTrash } from "@tabler/icons-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CommentAvatar } from "./CommentAvatar";
 import type { AnnotationMeta, ReviewThread } from "./types";
 
@@ -51,15 +52,21 @@ export function DiffAnnotation({
         </p>
       </div>
       {canDelete && (
-        <button
-          type="button"
-          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive -mr-1 -mt-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/comment:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="Delete comment"
-          title="Delete comment"
-          onClick={() => onDeleteComment(meta.thread)}
-        >
-          <IconTrash size={14} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive -mr-1 -mt-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/comment:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Delete comment"
+                onClick={() => onDeleteComment(meta.thread)}
+              >
+                <IconTrash size={14} />
+              </button>
+            }
+          />
+          <TooltipContent>Delete comment</TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

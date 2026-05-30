@@ -11,6 +11,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ResolvedColorScheme } from "@/lib/colorScheme";
 import { CommentAvatar } from "./CommentAvatar";
 import type { ReviewThread } from "./types";
@@ -155,68 +156,96 @@ export function SidebarTree({
           role="group"
           aria-label="Sidebar sections"
         >
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={`size-7 ${section === "files" ? "pointer-events-none text-foreground" : "text-muted-foreground"}`}
-            aria-label="Files"
-            aria-pressed={section === "files"}
-            onClick={() => setSection("files")}
-          >
-            <IconListTree size={16} />
-            <span className="sr-only">Files</span>
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size={openComments.length > 0 ? "sm" : "icon-sm"}
-            className={`${openComments.length > 0 ? "h-7 px-1.5" : "size-7"} ${section === "comments" ? "pointer-events-none text-foreground" : "text-muted-foreground"}`}
-            aria-label="Comments"
-            aria-pressed={section === "comments"}
-            onClick={() => setSection("comments")}
-          >
-            <CommentsIcon size={16} />
-            <span className="sr-only">Comments</span>
-            {openComments.length > 0 && (
-              <span
-                aria-hidden="true"
-                className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-200 px-1 text-[10px] leading-none font-medium tabular-nums text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
-              >
-                {openComments.length}
-              </span>
-            )}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={`size-7 ${section === "files" ? "text-foreground" : "text-muted-foreground"}`}
+                  aria-label="Files"
+                  aria-pressed={section === "files"}
+                  onClick={() => setSection("files")}
+                >
+                  <IconListTree size={16} />
+                  <span className="sr-only">Files</span>
+                </Button>
+              }
+            />
+            <TooltipContent>Files</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size={openComments.length > 0 ? "sm" : "icon-sm"}
+                  className={`${openComments.length > 0 ? "h-7 px-1.5" : "size-7"} ${section === "comments" ? "text-foreground" : "text-muted-foreground"}`}
+                  aria-label="Comments"
+                  aria-pressed={section === "comments"}
+                  onClick={() => setSection("comments")}
+                >
+                  <CommentsIcon size={16} />
+                  <span className="sr-only">Comments</span>
+                  {openComments.length > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-200 px-1 text-[10px] leading-none font-medium tabular-nums text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+                    >
+                      {openComments.length}
+                    </span>
+                  )}
+                </Button>
+              }
+            />
+            <TooltipContent>Comments</TooltipContent>
+          </Tooltip>
         </div>
         {section === "files" && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-7 text-muted-foreground"
-            aria-label="Show file search"
-            aria-pressed={search.isOpen}
-            onPointerDown={(event) => {
-              if (search.isOpen) {
-                event.preventDefault();
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-7 text-muted-foreground"
+                  aria-label="Show file search"
+                  aria-pressed={search.isOpen}
+                  onPointerDown={(event) => {
+                    if (search.isOpen) {
+                      event.preventDefault();
+                    }
+                  }}
+                  onClick={() => (search.isOpen ? search.close() : search.open(""))}
+                >
+                  <IconSearch size={16} />
+                </Button>
               }
-            }}
-            onClick={() => (search.isOpen ? search.close() : search.open(""))}
-          >
-            <IconSearch size={16} />
-          </Button>
+            />
+            <TooltipContent>Show file search</TooltipContent>
+          </Tooltip>
         )}
         {onClose && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-7 text-muted-foreground md:hidden"
-            aria-label="Close file tree"
-            onClick={onClose}
-          >
-            <IconX size={16} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-7 text-muted-foreground md:hidden"
+                  aria-label="Close file tree"
+                  onClick={onClose}
+                >
+                  <IconX size={16} />
+                </Button>
+              }
+            />
+            <TooltipContent>Close file tree</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
@@ -289,15 +318,21 @@ export function SidebarTree({
                               </div>
                             </button>
                             {canDelete && (
-                              <button
-                                type="button"
-                                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive my-2 mr-2 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/thread:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                aria-label="Delete comment"
-                                title="Delete comment"
-                                onClick={() => onDeleteComment(thread)}
-                              >
-                                <IconTrash size={14} />
-                              </button>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <button
+                                      type="button"
+                                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive my-2 mr-2 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/thread:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                      aria-label="Delete comment"
+                                      onClick={() => onDeleteComment(thread)}
+                                    >
+                                      <IconTrash size={14} />
+                                    </button>
+                                  }
+                                />
+                                <TooltipContent>Delete comment</TooltipContent>
+                              </Tooltip>
                             )}
                           </div>
                         );

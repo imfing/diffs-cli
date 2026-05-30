@@ -27,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AppColorScheme } from "@/lib/colorScheme";
 import type {
   AppConfig,
@@ -204,18 +205,24 @@ export function DiffToolbar({
 
   return (
     <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 dark:border-neutral-700 dark:bg-neutral-900">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className={headerIconButtonClass}
-        onClick={onSidebarToggle}
-        aria-pressed={sidebarOpen}
-        aria-label="Show file tree"
-        title="Show file tree"
-      >
-        <IconLayoutSidebar size={14} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className={headerIconButtonClass}
+              onClick={onSidebarToggle}
+              aria-pressed={sidebarOpen}
+              aria-label="Show file tree"
+            >
+              <IconLayoutSidebar size={14} />
+            </Button>
+          }
+        />
+        <TooltipContent>Show file tree</TooltipContent>
+      </Tooltip>
 
       <div className="mr-auto flex min-w-0 items-center gap-2">
         {isLocal ? (
@@ -362,7 +369,6 @@ export function DiffToolbar({
                 size="icon-sm"
                 className={headerIconButtonClass}
                 aria-label="More actions"
-                title="More actions"
               >
                 <IconDots />
               </Button>
@@ -430,18 +436,26 @@ export function DiffToolbar({
           </Button>
         )}
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={headerIconButtonClass}
-          onClick={onToggleAllCollapsed}
-          aria-pressed={allCollapsed}
-          aria-label={allCollapsed ? "Expand all files" : "Collapse all files"}
-          title={allCollapsed ? "Expand all files" : "Collapse all files"}
-        >
-          <IconSwitchVertical />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={headerIconButtonClass}
+                onClick={onToggleAllCollapsed}
+                aria-pressed={allCollapsed}
+                aria-label={allCollapsed ? "Expand all files" : "Collapse all files"}
+              >
+                <IconSwitchVertical />
+              </Button>
+            }
+          />
+          <TooltipContent>
+            {allCollapsed ? "Expand all files" : "Collapse all files"}
+          </TooltipContent>
+        </Tooltip>
 
         <Suspense fallback={null}>
           <DiffSettingsPopover

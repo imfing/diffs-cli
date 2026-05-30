@@ -69,7 +69,6 @@ export function FileActionsMenu({
               size="icon-sm"
               className="size-6 shrink-0 p-0 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 [&_svg]:size-4"
               aria-label="File actions"
-              title="File actions"
             >
               <IconDots />
             </Button>

@@ -35,6 +35,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffToolbar } from "./diff-view/DiffToolbar";
 import { FileActionsMenu } from "./diff-view/FileActionsMenu";
@@ -1105,19 +1106,26 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     (item: CodeViewItem<AnnotationMeta>) => {
       const isCollapsed = item.collapsed ?? false;
       return (
-        <button
-          type="button"
-          title={isCollapsed ? "Expand file" : "Collapse file"}
-          className={`-ml-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border-none p-0 transition-all text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 ${
-            isCollapsed ? "" : "rotate-90"
-          }`}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleFileCollapsed(item.id);
-          }}
-        >
-          <IconChevronRight size={16} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className={`-ml-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border-none p-0 transition-all text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 ${
+                  isCollapsed ? "" : "rotate-90"
+                }`}
+                aria-label={isCollapsed ? "Expand file" : "Collapse file"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFileCollapsed(item.id);
+                }}
+              >
+                <IconChevronRight size={16} />
+              </button>
+            }
+          />
+          <TooltipContent>{isCollapsed ? "Expand file" : "Collapse file"}</TooltipContent>
+        </Tooltip>
       );
     },
     [toggleFileCollapsed],
