@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ResolvedColorScheme } from "@/lib/colorScheme";
+import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
 import { CommentAvatar } from "./CommentAvatar";
 import type { ReviewThread } from "./types";
 import { latestThreadComment, threadEndLine, threadLineLabel } from "./helpers";
@@ -142,6 +143,7 @@ export function SidebarTree({
       "--trees-search-bg-override": "var(--card)",
       "--trees-selected-bg-override": "var(--accent)",
       "--trees-selected-fg-override": "var(--accent-foreground)",
+      "--trees-font-size-override": DIFF_SURFACE_FONT_SIZE,
     }),
     [colorScheme],
   );
@@ -149,7 +151,7 @@ export function SidebarTree({
   const CommentsIcon = openComments.length > 0 ? IconMessageCirclePlus : IconMessageCircle;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col text-xs">
       <div className="flex items-center gap-3 px-4 pt-5 pb-2 md:px-3 md:pt-3 md:pb-1">
         <div
           className="mr-auto flex items-center gap-0.5"
@@ -264,7 +266,7 @@ export function SidebarTree({
                   <section key={path}>
                     <button
                       type="button"
-                      className="text-muted-foreground hover:text-foreground block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="text-muted-foreground hover:text-foreground block w-full cursor-pointer p-3 pb-2 text-left text-xs font-medium break-all outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => onFileActivate(path)}
                     >
                       <span className="select-text">{path}</span>
@@ -280,7 +282,7 @@ export function SidebarTree({
                           >
                             <button
                               type="button"
-                              className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 p-3 pr-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 p-3 pr-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               onClick={() => onCommentActivate(thread)}
                             >
                               <CommentAvatar author={latestComment?.author} />

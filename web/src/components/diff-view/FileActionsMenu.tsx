@@ -74,7 +74,7 @@ export function FileActionsMenu({
             </Button>
           }
         />
-        <DropdownMenuContent>
+        <DropdownMenuContent className="[&_[data-slot=dropdown-menu-item]]:text-[12px]">
           {actions.map((action) => {
             const copied = copiedKey === action.key;
             return (

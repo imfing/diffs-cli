@@ -204,7 +204,7 @@ export function DiffToolbar({
   const updatedAt = pullRequestInfo ? formatPullRequestDate(pullRequestInfo.updatedAt) : "";
 
   return (
-    <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 dark:border-neutral-700 dark:bg-neutral-900">
+    <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-900">
       <Tooltip>
         <TooltipTrigger
           render={
@@ -228,7 +228,7 @@ export function DiffToolbar({
         {isLocal ? (
           <div className="flex min-w-0 items-center gap-2">
             <span
-              className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
+              className="min-w-0 truncate text-xs text-neutral-500 dark:text-neutral-400"
               title={config.cwd || "current directory"}
             >
               {displayLocalPath(config.cwd)}
@@ -261,7 +261,7 @@ export function DiffToolbar({
         ) : (
           <div className="flex min-w-0 items-center gap-2">
             <span
-              className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
+              className="min-w-0 truncate text-xs text-neutral-500 dark:text-neutral-400"
               title={prUrl}
             >
               {remoteTitle.repo}
@@ -311,7 +311,7 @@ export function DiffToolbar({
                             </span>
                           )}
                         </div>
-                        <PopoverTitle className="line-clamp-2 text-sm leading-snug">
+                        <PopoverTitle className="line-clamp-2 text-xs leading-snug">
                           {pullRequestInfo.title || remoteTitle.pullRequest}
                         </PopoverTitle>
                         {(createdAt !== "" || updatedAt !== "") && (
@@ -350,7 +350,7 @@ export function DiffToolbar({
                       </div>
                     </>
                   ) : (
-                    <PopoverHeader>
+                    <PopoverHeader className="text-[12px]">
                       <PopoverTitle>{remoteTitle.pullRequest}</PopoverTitle>
                       <PopoverDescription>Pull request details are unavailable.</PopoverDescription>
                     </PopoverHeader>
@@ -374,7 +374,10 @@ export function DiffToolbar({
               </Button>
             }
           />
-          <DropdownMenuContent align="start">
+          <DropdownMenuContent
+            align="start"
+            className="[&_[data-slot=dropdown-menu-item]]:text-[12px]"
+          >
             {branchDiffPath != null && (
               <DropdownMenuItem render={<Link to={branchDiffPath} />}>
                 <IconGitBranch />

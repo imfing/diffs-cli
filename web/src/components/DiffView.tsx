@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, useRef, lazy, Suspense } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  lazy,
+  Suspense,
+  type CSSProperties,
+} from "react";
 import { useParams, useSearchParams, Link } from "react-router";
 import {
   parsePatchFiles,
@@ -71,6 +80,7 @@ import {
   threadEndSide,
 } from "./diff-view/helpers";
 import { apiFetch } from "@/lib/api";
+import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
 import { exportDiffToHtml } from "@/lib/exportHtml";
 import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
 
@@ -80,7 +90,8 @@ const codeViewStyle = {
   flex: 1,
   overflow: "auto" as const,
   scrollbarGutter: "stable" as const,
-};
+  "--diffs-font-size": DIFF_SURFACE_FONT_SIZE,
+} as CSSProperties;
 
 const STORAGE_DIFF_THEME = "diff-theme";
 const STORAGE_DIFF_STYLE = "diffs-diff-style";
@@ -1281,7 +1292,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   };
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex h-dvh flex-col text-xs">
       <DiffToolbar
         allCollapsed={allCollapsed}
         appColorScheme={appColorScheme}

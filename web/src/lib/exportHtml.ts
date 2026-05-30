@@ -3,6 +3,7 @@ import { preloadFileDiff } from "@pierre/diffs/ssr";
 import jetbrainsMono400Url from "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2?url";
 import jetbrainsMono700Url from "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-700-normal.woff2?url";
 import interVariableUrl from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
 import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
 
 // The subset of @pierre/diffs render options that affect how a file diff is
@@ -188,7 +189,7 @@ function fontVarsCss(codeFontFamily: string | undefined, uiFontFamily: string | 
   const code =
     prependFontFamily(codeFontFamily, DEFAULT_CODE_FONT_FAMILY) ?? DEFAULT_CODE_FONT_FAMILY;
   const ui = prependFontFamily(uiFontFamily, DEFAULT_UI_FONT_FAMILY) ?? DEFAULT_UI_FONT_FAMILY;
-  return `:root{--font-sans:${ui};}.diffs-root{--diffs-font-family:${code};}`;
+  return `:root{--font-sans:${ui};}.diffs-root{--diffs-font-family:${code};--diffs-font-size:${DIFF_SURFACE_FONT_SIZE};}`;
 }
 
 // Style injected inside the shadow root to space out the per-file blocks. The

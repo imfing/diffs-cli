@@ -40,7 +40,7 @@ export function CommentInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="group/input relative m-2 ml-3 flex max-w-[600px] flex-col gap-2.5 rounded-xl border border-[rgb(0_0_0_/_0.1)] bg-white bg-clip-padding p-3 font-sans shadow-[0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025)] dark:border-[rgb(255_255_255_/_0.1)] dark:bg-neutral-900/80 dark:shadow-[0_2px_4px_rgb(0_0_0_/_0.25),0_4px_8px_rgb(0_0_0_/_0.25)] md:flex-row"
+      className="group/input relative m-2 ml-3 flex max-w-[600px] flex-col gap-2.5 rounded-xl border border-[rgb(0_0_0_/_0.1)] bg-white bg-clip-padding p-3 font-sans text-xs shadow-[0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025)] dark:border-[rgb(255_255_255_/_0.1)] dark:bg-neutral-900/80 dark:shadow-[0_2px_4px_rgb(0_0_0_/_0.25),0_4px_8px_rgb(0_0_0_/_0.25)] md:flex-row"
     >
       <Tooltip>
         <TooltipTrigger
@@ -65,7 +65,7 @@ export function CommentInput({
           onKeyDown={handleKeyDown}
           placeholder="Add a comment…"
           rows={2}
-          className="w-full resize-none rounded-sm bg-transparent py-1.5 text-[14px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none dark:text-neutral-100 dark:placeholder:text-neutral-500 [field-sizing:content]"
+          className="w-full resize-none rounded-sm bg-transparent py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none dark:text-neutral-100 dark:placeholder:text-neutral-500 [field-sizing:content]"
         />
         <Tooltip>
           <TooltipTrigger
