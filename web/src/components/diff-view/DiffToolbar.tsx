@@ -1,18 +1,17 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type SVGProps } from "react";
 import { Link } from "react-router";
 import {
-  ArrowLeft,
-  ExternalLink,
-  PanelLeft,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  FileDiff,
-  GitBranch,
-  GitPullRequest,
-  SendHorizontal,
-  Download,
-  MoreHorizontal,
-} from "lucide-react";
+  IconArrowLeft,
+  IconFileDiff,
+  IconFileExport,
+  IconGitBranch,
+  IconGitPullRequest,
+  IconLayoutSidebar,
+  IconSend,
+  IconSwitchVertical,
+  IconDots,
+} from "@tabler/icons-react";
+import { siGithub, type SimpleIcon } from "simple-icons";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -42,6 +41,18 @@ import { displayLocalPath, headerIconButtonClass } from "./helpers";
 const DiffSettingsPopover = lazy(() =>
   import("./DiffSettingsPopover").then((m) => ({ default: m.DiffSettingsPopover })),
 );
+
+function SimpleBrandIcon({ icon, ...props }: { icon: SimpleIcon } & SVGProps<SVGSVGElement>) {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" {...props}>
+      <path fill="currentColor" d={icon.path} />
+    </svg>
+  );
+}
+
+function GitHubIcon(props: SVGProps<SVGSVGElement>) {
+  return <SimpleBrandIcon icon={siGithub} {...props} />;
+}
 
 function pullRequestTitle(prUrl: string) {
   try {
@@ -203,7 +214,7 @@ export function DiffToolbar({
         aria-label="Show file tree"
         title="Show file tree"
       >
-        <PanelLeft size={14} />
+        <IconLayoutSidebar size={14} />
       </Button>
 
       <div className="mr-auto flex min-w-0 items-center gap-2">
@@ -221,10 +232,13 @@ export function DiffToolbar({
                   className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
                   title={`Base: ${baseRef.trim()}`}
                 >
-                  <GitBranch size={12} />
+                  <IconGitBranch size={12} />
                   <span className="truncate">{baseRef.trim()}</span>
                 </span>
-                <ArrowLeft size={12} className="shrink-0 text-neutral-400 dark:text-neutral-500" />
+                <IconArrowLeft
+                  size={12}
+                  className="shrink-0 text-neutral-400 dark:text-neutral-500"
+                />
               </>
             )}
             {config.gitBranch.trim() !== "" && (
@@ -232,7 +246,7 @@ export function DiffToolbar({
                 className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
                 title={`Branch: ${config.gitBranch.trim()}`}
               >
-                <GitBranch size={12} />
+                <IconGitBranch size={12} />
                 <span className="truncate">{config.gitBranch.trim()}</span>
               </span>
             )}
@@ -255,7 +269,7 @@ export function DiffToolbar({
                       aria-label={`Pull request ${remoteTitle.pullRequest} overview`}
                       title={`Pull request ${remoteTitle.pullRequest}`}
                     >
-                      <GitPullRequest size={12} />
+                      <IconGitPullRequest size={12} />
                       <span className="truncate">{remoteTitle.pullRequest}</span>
                     </button>
                   }
@@ -273,7 +287,7 @@ export function DiffToolbar({
                           title={`${headBranch} into ${baseBranch}`}
                         >
                           <span className="min-w-0 truncate">{baseBranch}</span>
-                          <ArrowLeft size={12} className="shrink-0" />
+                          <IconArrowLeft size={12} className="shrink-0" />
                           <span className="min-w-0 truncate">{headBranch}</span>
                         </div>
                       )}
@@ -350,26 +364,26 @@ export function DiffToolbar({
                 aria-label="More actions"
                 title="More actions"
               >
-                <MoreHorizontal />
+                <IconDots />
               </Button>
             }
           />
           <DropdownMenuContent align="start">
             {branchDiffPath != null && (
               <DropdownMenuItem render={<Link to={branchDiffPath} />}>
-                <GitBranch />
+                <IconGitBranch />
                 View branch diff
               </DropdownMenuItem>
             )}
             {localDiffPath != null && (
               <DropdownMenuItem render={<Link to={localDiffPath} />}>
-                <FileDiff />
+                <IconFileDiff />
                 View local diff
               </DropdownMenuItem>
             )}
             {prDiffPath != null && (
               <DropdownMenuItem render={<Link to={prDiffPath} />}>
-                <GitPullRequest />
+                <IconGitPullRequest />
                 View PR diff
               </DropdownMenuItem>
             )}
@@ -377,7 +391,7 @@ export function DiffToolbar({
               <DropdownMenuItem
                 render={<a href={githubPrUrl} target="_blank" rel="noopener noreferrer" />}
               >
-                <ExternalLink />
+                <GitHubIcon />
                 Open GitHub Pull request
               </DropdownMenuItem>
             )}
@@ -385,12 +399,12 @@ export function DiffToolbar({
               <DropdownMenuItem
                 render={<a href={githubRepoUrl} target="_blank" rel="noopener noreferrer" />}
               >
-                <ExternalLink />
+                <GitHubIcon />
                 Open GitHub repository
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={onExport} disabled={exporting}>
-              <Download />
+              <IconFileExport />
               {exporting ? "Exporting…" : "Export as HTML"}
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -408,7 +422,7 @@ export function DiffToolbar({
             aria-label={`Submit ${pendingCommentCount} pending ${pendingCommentCount === 1 ? "comment" : "comments"}`}
             title={`Submit ${pendingCommentCount} pending ${pendingCommentCount === 1 ? "comment" : "comments"}`}
           >
-            <SendHorizontal size={13} />
+            <IconSend size={13} />
             <span>{submittingPendingComments ? "Submitting" : "Submit comments"}</span>
             <span className="rounded-full bg-white/20 px-1 text-[10px] tabular-nums text-white">
               {pendingCommentCount}
@@ -426,7 +440,7 @@ export function DiffToolbar({
           aria-label={allCollapsed ? "Expand all files" : "Collapse all files"}
           title={allCollapsed ? "Expand all files" : "Collapse all files"}
         >
-          {allCollapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
+          <IconSwitchVertical />
         </Button>
 
         <Suspense fallback={null}>

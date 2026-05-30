@@ -1,5 +1,5 @@
 import type { FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { IconDeviceDesktop, IconMoon, IconSun } from "@tabler/icons-react";
 import type {
   DiffOrderBy,
   DiffOrderByOption,
@@ -34,9 +34,9 @@ export const diffThemeOptions: readonly DiffThemeOption[] = [
 ];
 
 export const colorSchemeOptions: readonly ColorSchemeOption[] = [
-  { id: "system", label: "System", icon: Monitor },
-  { id: "light", label: "Light", icon: Sun },
-  { id: "dark", label: "Dark", icon: Moon },
+  { id: "system", label: "System", icon: IconDeviceDesktop },
+  { id: "light", label: "Light", icon: IconSun },
+  { id: "dark", label: "Dark", icon: IconMoon },
 ];
 
 export function isDiffThemeId(value: unknown): value is DiffThemeId {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, X } from "lucide-react";
+import { IconArrowUp, IconX } from "@tabler/icons-react";
 
 export function CommentInput({
   onSubmit,
@@ -47,7 +47,7 @@ export function CommentInput({
         className="absolute -right-2 -top-2 flex size-5 cursor-pointer items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-400 opacity-0 shadow-sm transition-all hover:border-neutral-300 hover:text-neutral-600 group-hover/input:opacity-100 dark:border-neutral-600 dark:bg-neutral-800 dark:hover:border-neutral-500 dark:hover:text-neutral-200"
         title="Cancel"
       >
-        <X size={12} />
+        <IconX size={12} />
       </button>
       <div className="flex w-full gap-2.5">
         <textarea
@@ -64,7 +64,7 @@ export function CommentInput({
           disabled={!body.trim()}
           className="inline-flex size-8 shrink-0 cursor-pointer select-none items-center justify-center self-end rounded-full bg-blue-500 text-white transition-all hover:bg-blue-600 disabled:pointer-events-none disabled:opacity-50"
         >
-          <ArrowUp size={16} />
+          <IconArrowUp size={16} />
         </button>
       </div>
     </form>

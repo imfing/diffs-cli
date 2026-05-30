@@ -1,5 +1,5 @@
 import type { DiffsThemeNames, SelectedLineRange, ThemesType, ThemeTypes } from "@pierre/diffs";
-import type { LucideIcon } from "lucide-react";
+import type { TablerIcon } from "@tabler/icons-react";
 import type { AppColorScheme } from "@/lib/colorScheme";
 
 export type DiffStyle = "split" | "unified";
@@ -31,7 +31,7 @@ export type DiffThemeOption = {
 export type ColorSchemeOption = {
   id: AppColorScheme;
   label: string;
-  icon: LucideIcon;
+  icon: TablerIcon;
 };
 
 export type PatchLoadState = {

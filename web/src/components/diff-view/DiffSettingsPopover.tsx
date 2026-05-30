@@ -11,7 +11,13 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, Columns2, Rows2, Settings2 } from "lucide-react";
+import {
+  IconAdjustmentsHorizontal,
+  IconColumns2,
+  IconLayoutRows,
+  IconSortAscending,
+  IconSortDescending,
+} from "@tabler/icons-react";
 import { isAppColorScheme, type AppColorScheme } from "@/lib/colorScheme";
 import type { DiffOrderBy, DiffOrderDir, DiffStyle, DiffThemeId } from "./types";
 import {
@@ -26,9 +32,9 @@ import {
 const settingsRowClass = "flex items-center justify-between gap-4 py-1 text-sm";
 
 const diffStyleOptions = [
-  { id: "split", label: "Split", icon: Columns2 },
-  { id: "unified", label: "Unified", icon: Rows2 },
-] as const satisfies readonly { id: DiffStyle; label: string; icon: typeof Columns2 }[];
+  { id: "split", label: "Split", icon: IconColumns2 },
+  { id: "unified", label: "Unified", icon: IconLayoutRows },
+] as const satisfies readonly { id: DiffStyle; label: string; icon: typeof IconColumns2 }[];
 
 export function DiffSettingsPopover({
   open,
@@ -91,7 +97,7 @@ export function DiffSettingsPopover({
             aria-label="Settings"
             title="Settings"
           >
-            <Settings2 size={14} />
+            <IconAdjustmentsHorizontal size={14} />
           </Button>
         }
       />
@@ -178,9 +184,9 @@ export function DiffSettingsPopover({
                 title={orderDir === "asc" ? "Ascending" : "Descending"}
               >
                 {orderDir === "asc" ? (
-                  <ArrowUpNarrowWide size={14} />
+                  <IconSortAscending size={14} />
                 ) : (
-                  <ArrowDownWideNarrow size={14} />
+                  <IconSortDescending size={14} />
                 )}
               </Button>
             </div>

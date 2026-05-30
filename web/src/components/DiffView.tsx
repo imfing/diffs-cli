@@ -18,7 +18,14 @@ import {
   watchSystemColorScheme,
   type AppColorScheme,
 } from "@/lib/colorScheme";
-import { ChevronRight, Check, CircleAlert, ExternalLink, FileX2, CheckCheck } from "lucide-react";
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconChecks,
+  IconChevronRight,
+  IconExternalLink,
+  IconFileX,
+} from "@tabler/icons-react";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Empty,
@@ -540,11 +547,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     () => splitPatchByFile(effectivePatchState.patch),
     [effectivePatchState.patch],
   );
-  // Resolves GitHub/branch links once per session for the toolbar menu and the
-  // local empty state. Triggered lazily — on menu open (below) or when the local
-  // empty state shows — so a normal diff view never spawns the gh/git lookups.
-  // Only local/branch sessions have a backing repo; PR mode derives its links
-  // from the route instead.
+  // Resolves GitHub/branch links once per local/branch session. PR mode derives
+  // its links from the route instead.
   const loadRepoContext = useCallback(() => {
     if (!usesLocalStore || repoContextRequested.current) return;
     repoContextRequested.current = true;
@@ -554,12 +558,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         repoContextRequested.current = false;
       });
   }, [usesLocalStore]);
-  // The local empty state's "View branch diff" CTA needs the resolved base, so
-  // fetch when that state is reached even if the menu was never opened.
-  const showLocalEmpty = isLocal && effectivePatchState.status === "loaded" && files.length === 0;
+  const shouldLoadRepoContext = usesLocalStore && effectivePatchState.status === "loaded";
   useEffect(() => {
-    if (showLocalEmpty) loadRepoContext();
-  }, [showLocalEmpty, loadRepoContext]);
+    if (shouldLoadRepoContext) loadRepoContext();
+  }, [shouldLoadRepoContext, loadRepoContext]);
   // Reviewed signatures, reloaded synchronously whenever the storage key
   // changes (e.g. navigating between PRs) using the render-time reset pattern.
   const [reviewed, setReviewed] = useState<{ key: string; map: Map<string, string> }>(() => ({
@@ -1114,7 +1116,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             toggleFileCollapsed(item.id);
           }}
         >
-          <ChevronRight size={16} />
+          <IconChevronRight size={16} />
         </button>
       );
     },
@@ -1144,7 +1146,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
                   : "border-neutral-300 dark:border-neutral-600"
               }`}
             >
-              {isReviewed && <Check size={12} strokeWidth={3} />}
+              {isReviewed && <IconCheck size={12} stroke={3} />}
             </span>
             Reviewed
             <input
@@ -1176,7 +1178,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         <Empty className="flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <CircleAlert />
+              <IconAlertCircle />
             </EmptyMedia>
             <EmptyTitle>Failed to load diff</EmptyTitle>
             <EmptyDescription>{error}</EmptyDescription>
@@ -1207,7 +1209,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         <Empty className="flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <FileX2 />
+              <IconFileX />
             </EmptyMedia>
             <EmptyTitle>{emptyTitle}</EmptyTitle>
             <EmptyDescription>{emptyMessage}</EmptyDescription>
@@ -1227,7 +1229,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
                 rel="noopener noreferrer"
                 className={buttonVariants({ size: "sm" })}
               >
-                <ExternalLink />
+                <IconExternalLink />
                 Open in browser
               </a>
             ) : (
@@ -1336,7 +1338,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             <Empty className="flex-1">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <CheckCheck />
+                  <IconChecks />
                 </EmptyMedia>
                 <EmptyTitle>All files reviewed</EmptyTitle>
                 <EmptyDescription>

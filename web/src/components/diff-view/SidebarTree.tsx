@@ -2,7 +2,14 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
-import { Search, FolderTree, MessageCircle, MessageCircleMore, Trash2, X } from "lucide-react";
+import {
+  IconListTree,
+  IconMessageCircle,
+  IconMessageCirclePlus,
+  IconSearch,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import type { ResolvedColorScheme } from "@/lib/colorScheme";
 import { CommentAvatar } from "./CommentAvatar";
@@ -138,7 +145,7 @@ export function SidebarTree({
     [colorScheme],
   );
 
-  const CommentsIcon = openComments.length > 0 ? MessageCircleMore : MessageCircle;
+  const CommentsIcon = openComments.length > 0 ? IconMessageCirclePlus : IconMessageCircle;
 
   return (
     <div className="flex h-full flex-col">
@@ -157,7 +164,7 @@ export function SidebarTree({
             aria-pressed={section === "files"}
             onClick={() => setSection("files")}
           >
-            <FolderTree size={16} />
+            <IconListTree size={16} />
             <span className="sr-only">Files</span>
           </Button>
           <Button
@@ -196,7 +203,7 @@ export function SidebarTree({
             }}
             onClick={() => (search.isOpen ? search.close() : search.open(""))}
           >
-            <Search size={16} />
+            <IconSearch size={16} />
           </Button>
         )}
         {onClose && (
@@ -208,7 +215,7 @@ export function SidebarTree({
             aria-label="Close file tree"
             onClick={onClose}
           >
-            <X size={16} />
+            <IconX size={16} />
           </Button>
         )}
       </div>
@@ -289,7 +296,7 @@ export function SidebarTree({
                                 title="Delete comment"
                                 onClick={() => onDeleteComment(thread)}
                               >
-                                <Trash2 size={14} />
+                                <IconTrash size={14} />
                               </button>
                             )}
                           </div>

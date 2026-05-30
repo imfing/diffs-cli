@@ -1,5 +1,5 @@
 import { CommentInput } from "@/components/CommentInput";
-import { Trash2 } from "lucide-react";
+import { IconTrash } from "@tabler/icons-react";
 import { CommentAvatar } from "./CommentAvatar";
 import type { AnnotationMeta, ReviewThread } from "./types";
 
@@ -58,7 +58,7 @@ export function DiffAnnotation({
           title="Delete comment"
           onClick={() => onDeleteComment(meta.thread)}
         >
-          <Trash2 size={14} />
+          <IconTrash size={14} />
         </button>
       )}
     </div>

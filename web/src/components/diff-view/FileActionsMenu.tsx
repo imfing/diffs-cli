@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, MoreHorizontal } from "lucide-react";
+import { IconCheck, IconDots } from "@tabler/icons-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -71,7 +71,7 @@ export function FileActionsMenu({
               aria-label="File actions"
               title="File actions"
             >
-              <MoreHorizontal />
+              <IconDots />
             </Button>
           }
         />
@@ -85,7 +85,7 @@ export function FileActionsMenu({
                 disabled={action.getText() == null}
                 onClick={() => copy(action)}
               >
-                {copied ? <Check className="text-green-600! dark:text-green-400!" /> : null}
+                {copied ? <IconCheck className="text-green-600! dark:text-green-400!" /> : null}
                 {copied ? "Copied" : action.label}
               </DropdownMenuItem>
             );
