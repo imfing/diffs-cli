@@ -1052,7 +1052,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       enableLineSelection: true,
       onGutterUtilityClick: openCommentTarget,
       onLineSelectionEnd: openCommentTarget,
-      layout: { paddingTop: 12, paddingBottom: 12, gap: 12 },
+      layout: { paddingTop: 0, paddingBottom: 12, gap: 12 },
     }),
     [
       selectedDiffTheme.theme,
