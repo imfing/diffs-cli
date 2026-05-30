@@ -1,16 +1,19 @@
 import { lazy, Suspense } from "react";
+import { Link } from "react-router";
 import {
   ArrowLeft,
   ExternalLink,
   PanelLeft,
   ChevronsDownUp,
   ChevronsUpDown,
+  FileDiff,
   GitBranch,
   GitPullRequest,
   SendHorizontal,
   Download,
+  MoreHorizontal,
 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
@@ -19,6 +22,12 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { AppColorScheme } from "@/lib/colorScheme";
 import type {
   AppConfig,
@@ -33,11 +42,6 @@ import { displayLocalPath, headerIconButtonClass } from "./helpers";
 const DiffSettingsPopover = lazy(() =>
   import("./DiffSettingsPopover").then((m) => ({ default: m.DiffSettingsPopover })),
 );
-const headerIconLinkClass = buttonVariants({
-  variant: "ghost",
-  size: "icon-sm",
-  className: `${headerIconButtonClass} no-underline`,
-});
 
 function pullRequestTitle(prUrl: string) {
   try {
@@ -115,6 +119,12 @@ export function DiffToolbar({
   onToggleAllCollapsed,
   onExport,
   exporting,
+  onMenuOpen,
+  githubRepoUrl,
+  githubPrUrl,
+  prDiffPath,
+  branchDiffPath,
+  localDiffPath,
   pendingCommentCount,
   pullRequestInfo,
   wordWrap,
@@ -153,6 +163,12 @@ export function DiffToolbar({
   onToggleAllCollapsed: () => void;
   onExport: () => void;
   exporting: boolean;
+  onMenuOpen: () => void;
+  githubRepoUrl?: string;
+  githubPrUrl?: string;
+  prDiffPath?: string;
+  branchDiffPath?: string;
+  localDiffPath?: string;
   pendingCommentCount: number;
   pullRequestInfo: PullRequestInfo | null;
   wordWrap: boolean;
@@ -190,138 +206,196 @@ export function DiffToolbar({
         <PanelLeft size={14} />
       </Button>
 
-      {isLocal ? (
-        <div className="mr-auto flex min-w-0 items-center gap-2">
-          <span
-            className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
-            title={config.cwd || "current directory"}
-          >
-            {displayLocalPath(config.cwd)}
-          </span>
-          {config.gitBranch.trim() !== "" && (
+      <div className="mr-auto flex min-w-0 items-center gap-2">
+        {isLocal ? (
+          <div className="flex min-w-0 items-center gap-2">
             <span
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-              title={`Branch: ${config.gitBranch.trim()}`}
+              className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
+              title={config.cwd || "current directory"}
             >
-              <GitBranch size={12} />
-              <span className="truncate">{config.gitBranch.trim()}</span>
+              {displayLocalPath(config.cwd)}
             </span>
-          )}
-          {baseRef && baseRef.trim() !== "" && (
-            <>
-              <ArrowLeft size={12} className="shrink-0 text-neutral-400 dark:text-neutral-500" />
+            {baseRef && baseRef.trim() !== "" && (
+              <>
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+                  title={`Base: ${baseRef.trim()}`}
+                >
+                  <GitBranch size={12} />
+                  <span className="truncate">{baseRef.trim()}</span>
+                </span>
+                <ArrowLeft size={12} className="shrink-0 text-neutral-400 dark:text-neutral-500" />
+              </>
+            )}
+            {config.gitBranch.trim() !== "" && (
               <span
                 className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-                title={`Base: ${baseRef.trim()}`}
+                title={`Branch: ${config.gitBranch.trim()}`}
               >
                 <GitBranch size={12} />
-                <span className="truncate">{baseRef.trim()}</span>
+                <span className="truncate">{config.gitBranch.trim()}</span>
               </span>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="mr-auto flex min-w-0 items-center gap-2">
-          <span
-            className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
-            title={prUrl}
-          >
-            {remoteTitle.repo}
-          </span>
-          {remoteTitle.pullRequest !== "" && (
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <button
-                    type="button"
-                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-ring dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-                    aria-label={`Pull request ${remoteTitle.pullRequest} overview`}
-                    title={`Pull request ${remoteTitle.pullRequest}`}
-                  >
-                    <GitPullRequest size={12} />
-                    <span className="truncate">{remoteTitle.pullRequest}</span>
-                  </button>
-                }
-              />
-              <PopoverContent
-                align="start"
-                sideOffset={8}
-                className="w-[460px] max-w-[calc(100vw-24px)] gap-3 p-3"
-              >
-                {pullRequestInfo ? (
-                  <>
-                    {baseBranch !== "" && headBranch !== "" && (
-                      <div
-                        className="flex min-w-0 items-center gap-2 text-[12px] text-muted-foreground"
-                        title={`${headBranch} into ${baseBranch}`}
-                      >
-                        <span className="min-w-0 truncate">{baseBranch}</span>
-                        <ArrowLeft size={12} className="shrink-0" />
-                        <span className="min-w-0 truncate">{headBranch}</span>
-                      </div>
-                    )}
-                    <PopoverHeader className="gap-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${pullRequestStatusClass(pullRequestInfo)}`}
+            )}
+          </div>
+        ) : (
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="min-w-0 truncate text-[13px] text-neutral-500 dark:text-neutral-400"
+              title={prUrl}
+            >
+              {remoteTitle.repo}
+            </span>
+            {remoteTitle.pullRequest !== "" && (
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-ring dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+                      aria-label={`Pull request ${remoteTitle.pullRequest} overview`}
+                      title={`Pull request ${remoteTitle.pullRequest}`}
+                    >
+                      <GitPullRequest size={12} />
+                      <span className="truncate">{remoteTitle.pullRequest}</span>
+                    </button>
+                  }
+                />
+                <PopoverContent
+                  align="start"
+                  sideOffset={8}
+                  className="w-[460px] max-w-[calc(100vw-24px)] gap-3 p-3"
+                >
+                  {pullRequestInfo ? (
+                    <>
+                      {baseBranch !== "" && headBranch !== "" && (
+                        <div
+                          className="flex min-w-0 items-center gap-2 text-[12px] text-muted-foreground"
+                          title={`${headBranch} into ${baseBranch}`}
                         >
-                          {pullRequestStatus(pullRequestInfo)}
-                        </span>
-                        {pullRequestInfo.author !== "" && (
-                          <span className="min-w-0 truncate text-[12px] text-muted-foreground">
-                            {pullRequestInfo.author}
-                          </span>
-                        )}
-                      </div>
-                      <PopoverTitle className="line-clamp-2 text-sm leading-snug">
-                        {pullRequestInfo.title || remoteTitle.pullRequest}
-                      </PopoverTitle>
-                      {(createdAt !== "" || updatedAt !== "") && (
-                        <PopoverDescription className="text-xs">
-                          {createdAt !== "" ? `Opened ${createdAt}` : ""}
-                          {createdAt !== "" && updatedAt !== "" ? " · " : ""}
-                          {updatedAt !== "" ? `Updated ${updatedAt}` : ""}
-                        </PopoverDescription>
+                          <span className="min-w-0 truncate">{baseBranch}</span>
+                          <ArrowLeft size={12} className="shrink-0" />
+                          <span className="min-w-0 truncate">{headBranch}</span>
+                        </div>
                       )}
+                      <PopoverHeader className="gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${pullRequestStatusClass(pullRequestInfo)}`}
+                          >
+                            {pullRequestStatus(pullRequestInfo)}
+                          </span>
+                          {pullRequestInfo.author !== "" && (
+                            <span className="min-w-0 truncate text-[12px] text-muted-foreground">
+                              {pullRequestInfo.author}
+                            </span>
+                          )}
+                        </div>
+                        <PopoverTitle className="line-clamp-2 text-sm leading-snug">
+                          {pullRequestInfo.title || remoteTitle.pullRequest}
+                        </PopoverTitle>
+                        {(createdAt !== "" || updatedAt !== "") && (
+                          <PopoverDescription className="text-xs">
+                            {createdAt !== "" ? `Opened ${createdAt}` : ""}
+                            {createdAt !== "" && updatedAt !== "" ? " · " : ""}
+                            {updatedAt !== "" ? `Updated ${updatedAt}` : ""}
+                          </PopoverDescription>
+                        )}
+                      </PopoverHeader>
+                      <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                        <div className="rounded-md bg-muted px-2 py-1.5">
+                          <div className="font-medium text-green-600 dark:text-green-400">
+                            +{formatPullRequestCount(pullRequestInfo.additions)}
+                          </div>
+                          <div className="text-muted-foreground">Added</div>
+                        </div>
+                        <div className="rounded-md bg-muted px-2 py-1.5">
+                          <div className="font-medium text-red-600 dark:text-red-400">
+                            -{formatPullRequestCount(pullRequestInfo.deletions)}
+                          </div>
+                          <div className="text-muted-foreground">Deleted</div>
+                        </div>
+                        <div className="rounded-md bg-muted px-2 py-1.5">
+                          <div className="font-medium">
+                            {formatPullRequestCount(pullRequestInfo.changedFiles)}
+                          </div>
+                          <div className="text-muted-foreground">Files</div>
+                        </div>
+                        <div className="rounded-md bg-muted px-2 py-1.5">
+                          <div className="font-medium">
+                            {formatPullRequestCount(pullRequestInfo.commits)}
+                          </div>
+                          <div className="text-muted-foreground">Commits</div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <PopoverHeader>
+                      <PopoverTitle>{remoteTitle.pullRequest}</PopoverTitle>
+                      <PopoverDescription>Pull request details are unavailable.</PopoverDescription>
                     </PopoverHeader>
-                    <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                      <div className="rounded-md bg-muted px-2 py-1.5">
-                        <div className="font-medium text-green-600 dark:text-green-400">
-                          +{formatPullRequestCount(pullRequestInfo.additions)}
-                        </div>
-                        <div className="text-muted-foreground">Added</div>
-                      </div>
-                      <div className="rounded-md bg-muted px-2 py-1.5">
-                        <div className="font-medium text-red-600 dark:text-red-400">
-                          -{formatPullRequestCount(pullRequestInfo.deletions)}
-                        </div>
-                        <div className="text-muted-foreground">Deleted</div>
-                      </div>
-                      <div className="rounded-md bg-muted px-2 py-1.5">
-                        <div className="font-medium">
-                          {formatPullRequestCount(pullRequestInfo.changedFiles)}
-                        </div>
-                        <div className="text-muted-foreground">Files</div>
-                      </div>
-                      <div className="rounded-md bg-muted px-2 py-1.5">
-                        <div className="font-medium">
-                          {formatPullRequestCount(pullRequestInfo.commits)}
-                        </div>
-                        <div className="text-muted-foreground">Commits</div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <PopoverHeader>
-                    <PopoverTitle>{remoteTitle.pullRequest}</PopoverTitle>
-                    <PopoverDescription>Pull request details are unavailable.</PopoverDescription>
-                  </PopoverHeader>
-                )}
-              </PopoverContent>
-            </Popover>
-          )}
-        </div>
-      )}
+                  )}
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
+        )}
+        <DropdownMenu onOpenChange={(open) => open && onMenuOpen()}>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={headerIconButtonClass}
+                aria-label="More actions"
+                title="More actions"
+              >
+                <MoreHorizontal />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start">
+            {branchDiffPath != null && (
+              <DropdownMenuItem render={<Link to={branchDiffPath} />}>
+                <GitBranch />
+                View branch diff
+              </DropdownMenuItem>
+            )}
+            {localDiffPath != null && (
+              <DropdownMenuItem render={<Link to={localDiffPath} />}>
+                <FileDiff />
+                View local diff
+              </DropdownMenuItem>
+            )}
+            {prDiffPath != null && (
+              <DropdownMenuItem render={<Link to={prDiffPath} />}>
+                <GitPullRequest />
+                View PR diff
+              </DropdownMenuItem>
+            )}
+            {githubPrUrl != null && githubPrUrl !== "" && (
+              <DropdownMenuItem
+                render={<a href={githubPrUrl} target="_blank" rel="noopener noreferrer" />}
+              >
+                <ExternalLink />
+                Open GitHub Pull request
+              </DropdownMenuItem>
+            )}
+            {githubRepoUrl != null && githubRepoUrl !== "" && (
+              <DropdownMenuItem
+                render={<a href={githubRepoUrl} target="_blank" rel="noopener noreferrer" />}
+              >
+                <ExternalLink />
+                Open GitHub repository
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={onExport} disabled={exporting}>
+              <Download />
+              {exporting ? "Exporting…" : "Export as HTML"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
         {pendingCommentCount > 0 && (
@@ -342,21 +416,6 @@ export function DiffToolbar({
           </Button>
         )}
 
-        {!isLocal && (
-          <a
-            href={prUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={headerIconLinkClass}
-            aria-label="Open source in new tab"
-            title="Open source in new tab"
-          >
-            <ExternalLink size={14} />
-          </a>
-        )}
-
-        <span className="mx-1 h-3 w-px shrink-0 bg-neutral-300 dark:bg-neutral-600" />
-
         <Button
           type="button"
           variant="ghost"
@@ -368,19 +427,6 @@ export function DiffToolbar({
           title={allCollapsed ? "Expand all files" : "Collapse all files"}
         >
           {allCollapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={headerIconButtonClass}
-          onClick={onExport}
-          disabled={exporting}
-          aria-label="Export as standalone HTML"
-          title="Export as standalone HTML"
-        >
-          <Download />
         </Button>
 
         <Suspense fallback={null}>

@@ -154,3 +154,80 @@ export function localRepoTitle(cwd: string, branch: string): string {
 
 export const headerIconButtonClass =
   "size-7 shrink-0 p-0 text-muted-foreground [&_svg]:size-[15px]";
+
+// The trailing path component, e.g. "Button.tsx" from "src/ui/Button.tsx".
+export function fileBaseName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+// The in-app diff route for a GitHub PR URL. A PR URL's pathname
+// (/org/repo/pull/123) matches the app's /:org/:repo/pull/:number route, so it
+// doubles as the internal navigation target. Returns undefined for non-URLs.
+export function prDiffPathFromUrl(prUrl: string): string | undefined {
+  try {
+    return new URL(prUrl).pathname;
+  } catch {
+    return undefined;
+  }
+}
+
+// Strips a unified-diff path token down to a plain path so it matches
+// FileDiffMetadata.name: drops any trailing tab metadata (timestamps), removes
+// git's surrounding `"..."` quotes, then the leading `a/` or `b/` prefix. Note
+// the patch parser leaves C-style escapes (\NNN octal, \t, …) inside a quoted
+// path *as-is*, so this must NOT decode them either, or the keys diverge.
+function stripDiffPathPrefix(value: string): string {
+  let path = value;
+  const tab = path.indexOf("\t");
+  if (tab !== -1) path = path.slice(0, tab);
+  path = path.trim();
+  if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) {
+    path = path.slice(1, -1);
+  }
+  if (path.startsWith("a/") || path.startsWith("b/")) path = path.slice(2);
+  return path;
+}
+
+// Resolves the new-file path for one `diff --git` block, matching
+// FileDiffMetadata.name. Prefers the `+++ b/...` line, falls back to `rename
+// to`, the `--- a/...` source (for deletions), then the `diff --git` header.
+function patchTargetPath(block: readonly string[]): string | null {
+  let fromPath: string | null = null;
+  for (const line of block) {
+    if (line.startsWith("+++ ")) {
+      const path = stripDiffPathPrefix(line.slice(4));
+      if (path !== "" && path !== "/dev/null") return path;
+    } else if (line.startsWith("rename to ")) {
+      return stripDiffPathPrefix(line.slice(10));
+    } else if (line.startsWith("--- ") && fromPath == null) {
+      const path = stripDiffPathPrefix(line.slice(4));
+      if (path !== "" && path !== "/dev/null") fromPath = path;
+    }
+  }
+  if (fromPath != null) return fromPath;
+  const match = / b\/(.+)$/.exec(block[0]?.slice("diff --git ".length) ?? "");
+  return match ? match[1].trim() : null;
+}
+
+// Splits a unified patch into per-file sections keyed by the file's new path
+// (matching FileDiffMetadata.name). Each section is the byte-for-byte slice from
+// its `diff --git` line to the next, so copying it yields exactly what git
+// emitted — trailing whitespace and newlines preserved.
+export function splitPatchByFile(patch: string | null): Map<string, string> {
+  const sections = new Map<string, string>();
+  if (!patch) return sections;
+  // Offsets of each `diff --git ` line; section i spans [starts[i], starts[i+1]).
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) starts.push(offset);
+    offset += line.length + 1; // + 1 for the "\n" consumed by split
+  }
+  for (let i = 0; i < starts.length; i++) {
+    const end = i + 1 < starts.length ? starts[i + 1] : patch.length;
+    const section = patch.slice(starts[i], end);
+    const name = patchTargetPath(section.split("\n"));
+    if (name != null) sections.set(name, section);
+  }
+  return sections;
+}

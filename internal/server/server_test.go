@@ -1034,6 +1034,52 @@ func TestLocalWatcherIgnoresCommentTempFiles(t *testing.T) {
 	}
 }
 
+func TestResolveBranchBaseInfersInPriorityOrder(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "main")
+	writeFile(t, filepath.Join(dir, "f.txt"), "one\n")
+	git(t, dir, "add", "f.txt")
+	git(t, dir, "commit", "-m", "init")
+	git(t, dir, "checkout", "-b", "feature")
+	// A base that exists only as a remote-tracking ref (origin/<ref>).
+	git(t, dir, "update-ref", "refs/remotes/origin/release", "HEAD")
+
+	srv := &Server{cwd: dir}
+	tests := []struct {
+		name        string
+		prBase      string
+		repoDefault string
+		want        string
+	}{
+		{"pr base wins over repo default", "main", "release", "main"},
+		{"repo default when no pr base", "", "main", "main"},
+		{"main/master fallback when neither given", "", "", "main"},
+		{"origin/ fallback for remote-only ref", "release", "", "origin/release"},
+		{"skips unresolvable refs", "ghost", "main", "main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := srv.resolveBranchBase(context.Background(), tt.prBase, tt.repoDefault)
+			if got != tt.want {
+				t.Fatalf("resolveBranchBase(%q, %q) = %q, want %q", tt.prBase, tt.repoDefault, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveBranchBaseReturnsEmptyWhenNothingResolves(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "trunk")
+	writeFile(t, filepath.Join(dir, "f.txt"), "one\n")
+	git(t, dir, "add", "f.txt")
+	git(t, dir, "commit", "-m", "init")
+
+	// No main/master and no origin remote, so every candidate fails.
+	if got := (&Server{cwd: dir}).resolveBranchBase(context.Background(), "", ""); got != "" {
+		t.Fatalf("resolveBranchBase() = %q, want empty", got)
+	}
+}
+
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

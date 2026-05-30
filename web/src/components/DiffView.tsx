@@ -18,7 +18,7 @@ import {
   watchSystemColorScheme,
   type AppColorScheme,
 } from "@/lib/colorScheme";
-import { ChevronRight, Check, CircleAlert, FileX2, CheckCheck } from "lucide-react";
+import { ChevronRight, Check, CircleAlert, ExternalLink, FileX2, CheckCheck } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Empty,
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/empty";
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffToolbar } from "./diff-view/DiffToolbar";
+import { FileActionsMenu } from "./diff-view/FileActionsMenu";
 import { SidebarTree } from "./diff-view/SidebarTree";
 import type {
   AnnotationMeta,
@@ -52,10 +53,12 @@ import {
   isDiffStyle,
   isDiffThemeId,
   localRepoTitle,
+  prDiffPathFromUrl,
   selectedRangeEndLine,
   selectedRangeEndSide,
   selectedRangeSide,
   sortFiles,
+  splitPatchByFile,
   threadEndLine,
   threadEndSide,
 } from "./diff-view/helpers";
@@ -312,6 +315,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [repoContext, setRepoContext] = useState<{
+    repoUrl?: string;
+    prUrl?: string;
+    branchBase?: string;
+  } | null>(null);
+  const repoContextRequested = useRef(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
@@ -350,7 +359,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       ? `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
       : null;
   const baseTitle = isBranch
-    ? `${config.gitBranch.trim() || "HEAD"} ← ${baseRef || "base"}`
+    ? `${baseRef || "base"} ← ${config.gitBranch.trim() || "HEAD"}`
     : isLocal
       ? localRepoTitle(config.cwd, config.gitBranch)
       : org && repo && number
@@ -525,6 +534,32 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     for (const f of files) if (!map.has(f.name)) map.set(f.name, fileDiffSignature(f));
     return map;
   }, [files]);
+  // Raw patch text per file, so the per-file menu can copy exactly what git
+  // emitted for that file without reconstructing it from the parsed metadata.
+  const filePatchSections = useMemo(
+    () => splitPatchByFile(effectivePatchState.patch),
+    [effectivePatchState.patch],
+  );
+  // Resolves GitHub/branch links once per session for the toolbar menu and the
+  // local empty state. Triggered lazily — on menu open (below) or when the local
+  // empty state shows — so a normal diff view never spawns the gh/git lookups.
+  // Only local/branch sessions have a backing repo; PR mode derives its links
+  // from the route instead.
+  const loadRepoContext = useCallback(() => {
+    if (!usesLocalStore || repoContextRequested.current) return;
+    repoContextRequested.current = true;
+    apiFetch<{ repoUrl?: string; prUrl?: string; branchBase?: string }>("/api/repo-context")
+      .then(setRepoContext)
+      .catch(() => {
+        repoContextRequested.current = false;
+      });
+  }, [usesLocalStore]);
+  // The local empty state's "View branch diff" CTA needs the resolved base, so
+  // fetch when that state is reached even if the menu was never opened.
+  const showLocalEmpty = isLocal && effectivePatchState.status === "loaded" && files.length === 0;
+  useEffect(() => {
+    if (showLocalEmpty) loadRepoContext();
+  }, [showLocalEmpty, loadRepoContext]);
   // Reviewed signatures, reloaded synchronously whenever the storage key
   // changes (e.g. navigating between PRs) using the render-time reset pattern.
   const [reviewed, setReviewed] = useState<{ key: string; map: Map<string, string> }>(() => ({
@@ -1092,35 +1127,41 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       const sig = fileSignatures.get(item.fileDiff.name);
       const isReviewed = sig != null && reviewed.map.get(item.fileDiff.name) === sig;
       return (
-        <label
-          title="Mark file as reviewed (collapses it)"
-          className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition-colors ${
-            isReviewed
-              ? "text-green-600 dark:text-green-400"
-              : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
-          }`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span
-            className={`inline-flex size-4 items-center justify-center rounded border transition-colors ${
+        <div className="flex items-center gap-1">
+          <label
+            title="Mark file as reviewed (collapses it)"
+            className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition-colors ${
               isReviewed
-                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
-                : "border-neutral-300 dark:border-neutral-600"
+                ? "text-green-600 dark:text-green-400"
+                : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
             }`}
+            onClick={(e) => e.stopPropagation()}
           >
-            {isReviewed && <Check size={12} strokeWidth={3} />}
-          </span>
-          Reviewed
-          <input
-            type="checkbox"
-            className="sr-only"
-            checked={isReviewed}
-            onChange={() => toggleReviewed(item.id)}
+            <span
+              className={`inline-flex size-4 items-center justify-center rounded border transition-colors ${
+                isReviewed
+                  ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                  : "border-neutral-300 dark:border-neutral-600"
+              }`}
+            >
+              {isReviewed && <Check size={12} strokeWidth={3} />}
+            </span>
+            Reviewed
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={isReviewed}
+              onChange={() => toggleReviewed(item.id)}
+            />
+          </label>
+          <FileActionsMenu
+            path={item.fileDiff.name}
+            diffText={filePatchSections.get(item.fileDiff.name)}
           />
-        </label>
+        </div>
       );
     },
-    [fileSignatures, reviewed, toggleReviewed],
+    [fileSignatures, reviewed, toggleReviewed, filePatchSections],
   );
 
   if (loading) {
@@ -1151,11 +1192,16 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   }
 
   if (files.length === 0) {
+    const emptyTitle = isBranch
+      ? "No commits ahead"
+      : isLocal
+        ? "No file changes yet"
+        : "No files changed";
     const emptyMessage = isBranch
       ? `No commits ahead of ${baseRef || "base"}.`
       : isLocal
-        ? "No local changes in the working tree."
-        : "No files changed in this PR.";
+        ? "The latest diffs are no longer available."
+        : "This pull request doesn't change any files.";
     return (
       <div className="flex h-dvh flex-col">
         <Empty className="flex-1">
@@ -1163,18 +1209,56 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             <EmptyMedia variant="icon">
               <FileX2 />
             </EmptyMedia>
-            <EmptyTitle>No changes to show</EmptyTitle>
+            <EmptyTitle>{emptyTitle}</EmptyTitle>
             <EmptyDescription>{emptyMessage}</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
-              Back
-            </Link>
+            {isLocal && repoContext?.branchBase ? (
+              <Link
+                to={`/branch?base=${encodeURIComponent(repoContext.branchBase)}`}
+                className={buttonVariants({ size: "sm" })}
+              >
+                View branch diff
+              </Link>
+            ) : !isLocal && !isBranch && prUrl !== "" ? (
+              <a
+                href={prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonVariants({ size: "sm" })}
+              >
+                <ExternalLink />
+                Open in browser
+              </a>
+            ) : (
+              <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Back
+              </Link>
+            )}
           </EmptyContent>
         </Empty>
       </div>
     );
   }
+
+  // Context-aware links for the toolbar menu, shown only when resolvable. In PR
+  // mode the repo URL comes straight from the route; otherwise from the lazily
+  // fetched repo context. "View PR diff" navigates in-app, the others open
+  // GitHub; both are omitted for the mode that's already showing that diff.
+  const githubRepoUrl =
+    !usesLocalStore && org && repo
+      ? `https://${config.githubHost}/${org}/${repo}`
+      : repoContext?.repoUrl;
+  const githubPrUrl = usesLocalStore ? repoContext?.prUrl : prUrl || undefined;
+  const prDiffPath =
+    usesLocalStore && repoContext?.prUrl ? prDiffPathFromUrl(repoContext.prUrl) : undefined;
+  const branchDiffPath =
+    isLocal && repoContext?.branchBase
+      ? `/branch?base=${encodeURIComponent(repoContext.branchBase)}`
+      : undefined;
+  // The counterpart to "View branch diff": branch mode offers a jump to the
+  // working-tree diff that `diffs` shows by default.
+  const localDiffPath = isBranch ? "/local" : undefined;
 
   const sidebarTreeProps = {
     paths: filePaths,
@@ -1211,6 +1295,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         onToggleAllCollapsed={toggleAllFilesCollapsed}
         onExport={handleExport}
         exporting={exporting}
+        onMenuOpen={loadRepoContext}
+        githubRepoUrl={githubRepoUrl}
+        githubPrUrl={githubPrUrl}
+        prDiffPath={prDiffPath}
+        branchDiffPath={branchDiffPath}
+        localDiffPath={localDiffPath}
         pendingCommentCount={pendingCommentThreads.length}
         pullRequestInfo={currentPullRequestInfo}
         wordWrap={wordWrap}

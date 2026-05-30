@@ -27,6 +27,8 @@ const (
 	gitDevNull        = "/dev/null"
 	// The PR UI should match GitHub's final Files changed diff, not the per-commit patch stream.
 	githubDiffMedia = "application/vnd.github.v3.diff"
+	// Bounds the gh/git calls behind the lazy repo-context lookup.
+	repoContextTimeout = 8 * time.Second
 )
 
 type Config struct {
@@ -141,6 +143,7 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/local-diff", s.handleLocalDiff)
 	mux.HandleFunc("GET /api/branch-diff", s.handleBranchDiff)
+	mux.HandleFunc("GET /api/repo-context", s.handleRepoContext)
 	mux.HandleFunc("GET /api/comments", s.handleListComments)
 	mux.HandleFunc("POST /api/comments", s.handleAddComment)
 	mux.HandleFunc("DELETE /api/comments/{threadID}", s.handleDeleteComment)
@@ -213,6 +216,96 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = io.WriteString(w, patch)
+}
+
+// repoContextResponse carries the optional GitHub/branch links the toolbar
+// menu and local empty state surface "when applicable". Every field is
+// best-effort: an empty value means "not available", so the UI just hides that
+// action rather than showing an error.
+type repoContextResponse struct {
+	// Canonical GitHub URL of the repo (e.g. https://github.com/org/repo).
+	RepoURL string `json:"repoUrl,omitempty"`
+	// GitHub URL of the pull request open for the current branch, if any.
+	PRURL string `json:"prUrl,omitempty"`
+	// Inferred base ref for `diffs branch`-style diffing (PR base -> repo
+	// default -> main/master), validated against the local repo.
+	BranchBase string `json:"branchBase,omitempty"`
+}
+
+// handleRepoContext resolves GitHub repo/PR links and a branch base for the
+// local repository, so the toolbar can offer context-aware actions without the
+// user knowing the URLs or base ref. Fetched lazily by the client (on menu open
+// / empty state) so the gh/git lookups never slow the normal page load. One gh
+// call per resource (PR, repo) — each requests every field it needs at once.
+func (s *Server) handleRepoContext(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), repoContextTimeout)
+	defer cancel()
+
+	var pr struct {
+		URL         string `json:"url"`
+		BaseRefName string `json:"baseRefName"`
+	}
+	_ = json.Unmarshal(s.ghJSON(ctx, "pr", "view", "--json", "url,baseRefName"), &pr)
+
+	var repo struct {
+		URL              string `json:"url"`
+		DefaultBranchRef struct {
+			Name string `json:"name"`
+		} `json:"defaultBranchRef"`
+	}
+	_ = json.Unmarshal(s.ghJSON(ctx, "repo", "view", "--json", "url,defaultBranchRef"), &repo)
+
+	writeJSON(w, http.StatusOK, repoContextResponse{
+		RepoURL:    repo.URL,
+		PRURL:      pr.URL,
+		BranchBase: s.resolveBranchBase(ctx, pr.BaseRefName, repo.DefaultBranchRef.Name),
+	})
+}
+
+// resolveBranchBase mirrors the `diffs branch` CLI inference: the first of the
+// PR base, repo default, then main/master that resolves to a commit locally
+// (or as origin/<ref>). Returns "" when none do. The PR/default refs are passed
+// in (already fetched by the caller) so this stays pure git and easy to test.
+func (s *Server) resolveBranchBase(ctx context.Context, prBase, repoDefault string) string {
+	for _, candidate := range []string{prBase, repoDefault, "main", "master"} {
+		if candidate == "" {
+			continue
+		}
+		if ref, ok := s.resolveLocalRef(ctx, candidate); ok {
+			return ref
+		}
+	}
+	return ""
+}
+
+// resolveLocalRef mirrors the CLI helper: a ref counts only if it resolves to a
+// commit locally, falling back to origin/<ref> for inferred bases that exist
+// only as a remote-tracking ref in fresh clones.
+func (s *Server) resolveLocalRef(ctx context.Context, ref string) (string, bool) {
+	if s.gitRefExists(ctx, ref) {
+		return ref, true
+	}
+	if candidate := "origin/" + ref; s.gitRefExists(ctx, candidate) {
+		return candidate, true
+	}
+	return "", false
+}
+
+func (s *Server) gitRefExists(ctx context.Context, ref string) bool {
+	return s.gitOK(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+}
+
+// ghJSON runs gh in the repository directory and returns its raw stdout, or nil
+// on any failure (gh absent, no PR, not a GitHub remote, timeout). Callers
+// json.Unmarshal the result, tolerating nil as an empty object.
+func (s *Server) ghJSON(ctx context.Context, args ...string) []byte {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = s.cwd
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 func (s *Server) handlePullRequestInfo(w http.ResponseWriter, r *http.Request) {
