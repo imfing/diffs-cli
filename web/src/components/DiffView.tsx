@@ -1163,6 +1163,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       overflow: (wordWrap ? "wrap" : "scroll") as "wrap" | "scroll",
       enableGutterUtility: true,
       enableLineSelection: true,
+      // Drop the gutter "+" button's negative margin so it stops overhanging
+      // the line start and blocking selection (shadow DOM, so needs unsafeCSS).
+      unsafeCSS: "[data-utility-button] { margin-right: 0; }",
       onGutterUtilityClick: openCommentTarget,
       onLineSelectionEnd: openCommentTarget,
       layout: { paddingTop: 0, paddingBottom: 12, gap: 12 },
