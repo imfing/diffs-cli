@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useState,
   useRef,
@@ -12,6 +13,7 @@ import { useParams, useSearchParams, Link } from "react-router";
 import {
   parsePatchFiles,
   type CodeViewItem,
+  type CodeViewScrollBehavior,
   type DiffLineAnnotation,
   type FileDiffMetadata,
   type SelectedLineRange,
@@ -48,6 +50,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffToolbar } from "./diff-view/DiffToolbar";
 import { FileActionsMenu } from "./diff-view/FileActionsMenu";
+import { ShortcutsDialog } from "./diff-view/ShortcutsDialog";
 import { SidebarTree } from "./diff-view/SidebarTree";
 import type {
   AnnotationMeta,
@@ -102,6 +105,11 @@ const STORAGE_LINE_NUMBERS = "diffs-line-numbers";
 const STORAGE_LINE_BACKGROUNDS = "diffs-line-backgrounds";
 const STORAGE_COLLAPSE_REMOVALS = "diffs-collapse-removals";
 const STORAGE_HIDE_REVIEWED = "diffs-hide-reviewed";
+
+// Window after a programmatic scroll during which the cursor isn't re-synced.
+const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
+// Focusable elements whose own keys should take precedence over shortcuts.
+const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 
 function readStoredBool(key: string): boolean | null {
   const value = localStorage.getItem(key);
@@ -317,6 +325,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
   const [allCollapsedOverride, setAllCollapsed] = useState<boolean | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [showBackground, setShowBackground] = useState(
     () => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true,
   );
@@ -342,6 +351,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const repoContextRequested = useRef(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
+  // Keyboard cursor: the file at the top of the viewport. A ref so scrolling
+  // and rapid key presses don't churn React state.
+  const currentFileRef = useRef<string | null>(null);
+  const programmaticScrollAtRef = useRef(0);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
@@ -668,13 +681,40 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const allCollapsed =
     allCollapsedOverride ??
     (initialItems.length > 0 && initialItems.every((item) => item.collapsed));
+  // File whose sticky header sits at the top of the viewport, via the
+  // data-diff-file markers from renderHeaderMetadata.
+  const getCurrentFile = useCallback((): string | null => {
+    const area = codeViewAreaRef.current;
+    if (!area) return null;
+    const headers = area.querySelectorAll<HTMLElement>("[data-diff-file]");
+    if (headers.length === 0) return null;
+    const areaTop = area.getBoundingClientRect().top;
+    let current = headers[0].getAttribute("data-diff-file");
+    for (let i = 1; i < headers.length; i++) {
+      if (headers[i].getBoundingClientRect().top - areaTop > 8) break;
+      current = headers[i].getAttribute("data-diff-file");
+    }
+    return current;
+  }, []);
   useEffect(() => {
     const area = codeViewAreaRef.current;
     if (!area) return;
 
     let timer = 0;
+    let rafId = 0;
     const handleScroll = (e: Event) => {
       const el = e.target as HTMLElement;
+      // Sync the cursor to user scrolling, coalesced to one layout read per
+      // frame; skip while a programmatic scroll is still settling.
+      if (
+        rafId === 0 &&
+        Date.now() - programmaticScrollAtRef.current > PROGRAMMATIC_SCROLL_SETTLE_MS
+      ) {
+        rafId = requestAnimationFrame(() => {
+          rafId = 0;
+          currentFileRef.current = getCurrentFile() ?? currentFileRef.current;
+        });
+      }
       if (timer) clearTimeout(timer);
       timer = window.setTimeout(() => {
         sessionStorage.setItem(scrollStorageKey, String(el.scrollTop));
@@ -698,17 +738,20 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     return () => {
       area.removeEventListener("scroll", handleScroll, { capture: true });
       if (timer) clearTimeout(timer);
+      if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [scrollStorageKey, codeViewKey]);
+  }, [scrollStorageKey, codeViewKey, getCurrentFile]);
   const scrollToFile = useCallback(
-    (path: string) => {
+    (path: string, behavior: CodeViewScrollBehavior = "smooth-auto") => {
       const itemId = filePathToItemId.get(path);
       if (itemId == null) return;
+      currentFileRef.current = path;
+      programmaticScrollAtRef.current = Date.now();
       viewerRef.current?.scrollTo({
         type: "item",
         id: itemId,
         align: "start",
-        behavior: "smooth-auto",
+        behavior,
       });
       setMobileSidebarOpen(false);
     },
@@ -811,6 +854,76 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     },
     [fileSignatures, reviewed, reviewedStorageKey, collapsedStorageKey, collapseRemovals],
   );
+  // `n`/`p` step through visible files; `m` toggles reviewed on the cursor file.
+  const navigateFile = useCallback(
+    (delta: number) => {
+      if (visibleFiles.length === 0) return;
+      const current = currentFileRef.current ?? getCurrentFile();
+      const idx = current ? visibleFiles.findIndex((f) => f.name === current) : -1;
+      const nextIdx = idx === -1 ? 0 : Math.max(0, Math.min(visibleFiles.length - 1, idx + delta));
+      // Instant so holding `n`/`p` advances immediately, not per animation.
+      scrollToFile(visibleFiles[nextIdx].name, "instant");
+    },
+    [visibleFiles, getCurrentFile, scrollToFile],
+  );
+  const reviewCurrentFile = useCallback(() => {
+    const current = currentFileRef.current ?? getCurrentFile();
+    if (current == null) return;
+    const itemId = filePathToItemId.get(current);
+    if (itemId == null) return;
+    // Marking hides the file when "hide reviewed" is on; pre-advance the cursor.
+    if (hideReviewed) {
+      const sig = fileSignatures.get(current);
+      const willHide = sig != null && reviewed.map.get(current) !== sig;
+      if (willHide) {
+        const idx = visibleFiles.findIndex((f) => f.name === current);
+        const next = visibleFiles[idx + 1] ?? visibleFiles[idx - 1];
+        currentFileRef.current = next?.name ?? null;
+      }
+    }
+    toggleReviewed(itemId);
+  }, [
+    getCurrentFile,
+    filePathToItemId,
+    toggleReviewed,
+    hideReviewed,
+    fileSignatures,
+    reviewed,
+    visibleFiles,
+  ]);
+  // useEffectEvent keeps the latest closure without re-subscribing the listener.
+  const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || EDITABLE_TAGS.test(target.tagName))) {
+      return;
+    }
+    if (e.key === "?") {
+      e.preventDefault();
+      setShortcutsOpen((open) => !open);
+      return;
+    }
+    // Don't navigate the diff behind an open comment input or help dialog.
+    if (commentTarget || shortcutsOpen) return;
+    switch (e.key) {
+      case "n":
+        e.preventDefault();
+        navigateFile(1);
+        break;
+      case "p":
+        e.preventDefault();
+        navigateFile(-1);
+        break;
+      case "m":
+        e.preventDefault();
+        reviewCurrentFile();
+        break;
+    }
+  });
+  useEffect(() => {
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
   const handleColorSchemeChange = useCallback((value: AppColorScheme) => {
     setAppColorScheme(value);
     persistColorScheme(value);
@@ -1148,9 +1261,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       const sig = fileSignatures.get(item.fileDiff.name);
       const isReviewed = sig != null && reviewed.map.get(item.fileDiff.name) === sig;
       return (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" data-diff-file={item.fileDiff.name}>
           <label
-            title="Mark file as reviewed (collapses it)"
+            title="Mark file as reviewed (collapses it) · shortcut: m"
             className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition-colors ${
               isReviewed
                 ? "text-green-600 dark:text-green-400"
@@ -1293,6 +1406,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
   return (
     <div className="flex h-dvh flex-col text-xs">
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <DiffToolbar
         allCollapsed={allCollapsed}
         appColorScheme={appColorScheme}
@@ -1311,6 +1425,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         onOrderDirToggle={handleOrderDirToggle}
         onDiffThemeChange={handleDiffThemeChange}
         onSettingsOpenChange={setSettingsOpen}
+        onShortcutsOpen={() => setShortcutsOpen(true)}
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}
         onToggleAllCollapsed={toggleAllFilesCollapsed}

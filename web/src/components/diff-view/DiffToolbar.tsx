@@ -126,6 +126,7 @@ export function DiffToolbar({
   onOrderDirToggle,
   onDiffThemeChange,
   onSettingsOpenChange,
+  onShortcutsOpen,
   onSidebarToggle,
   onSubmitPendingComments,
   onToggleAllCollapsed,
@@ -170,6 +171,7 @@ export function DiffToolbar({
   onOrderDirToggle: () => void;
   onDiffThemeChange: (value: DiffThemeId) => void;
   onSettingsOpenChange: (open: boolean) => void;
+  onShortcutsOpen: () => void;
   onSidebarToggle: () => void;
   onSubmitPendingComments: () => void;
   onToggleAllCollapsed: () => void;
@@ -485,6 +487,7 @@ export function DiffToolbar({
             setCollapseRemovals={setCollapseRemovals}
             hideReviewed={hideReviewed}
             setHideReviewed={setHideReviewed}
+            onShortcutsOpen={onShortcutsOpen}
           />
         </Suspense>
       </div>

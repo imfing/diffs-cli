@@ -11,10 +11,12 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   IconAdjustmentsHorizontal,
   IconColumns2,
+  IconKeyboard,
   IconLayoutRows,
   IconSortAscending,
   IconSortDescending,
@@ -68,6 +70,7 @@ export function DiffSettingsPopover({
   setCollapseRemovals,
   hideReviewed,
   setHideReviewed,
+  onShortcutsOpen,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -92,6 +95,7 @@ export function DiffSettingsPopover({
   setCollapseRemovals: (value: boolean) => void;
   hideReviewed: boolean;
   setHideReviewed: (value: boolean) => void;
+  onShortcutsOpen: () => void;
 }) {
   return (
     <Tooltip>
@@ -292,6 +296,21 @@ export function DiffSettingsPopover({
                 </Select>
               </label>
             </div>
+            <Separator className="my-1 opacity-60" />
+            <button
+              type="button"
+              onClick={() => {
+                onOpenChange(false);
+                onShortcutsOpen();
+              }}
+              className={`${settingsRowClass} w-full cursor-pointer transition-colors hover:bg-muted/60 dark:hover:bg-white/[0.04]`}
+            >
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <IconKeyboard size={14} />
+                Keyboard shortcuts
+              </span>
+              <Kbd>?</Kbd>
+            </button>
           </div>
         </PopoverContent>
       </Popover>
