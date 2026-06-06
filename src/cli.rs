@@ -355,10 +355,8 @@ fn new_reload_logger(color: bool) -> server::OnChange {
 fn print_reload(files: &[git::ChangedFile], color: bool) {
     let c = palette(color);
     let (label, message) = reload_line(files, &c, color);
-    println!(
-        "{}",
-        log_line(&c, &label, &message, reload_label_color(&label, &c))
-    );
+    let label_color = reload_label_color(files.first().map(|f| f.action), &c);
+    println!("{}", log_line(&c, &label, &message, label_color));
 }
 
 fn reload_line(files: &[git::ChangedFile], c: &Colors, color: bool) -> (String, String) {
@@ -378,13 +376,13 @@ fn reload_line(files: &[git::ChangedFile], c: &Colors, color: bool) -> (String, 
     }
 }
 
-fn reload_label_color(label: &str, c: &Colors) -> &'static str {
-    match label {
-        "added" => c.green,
-        "modified" => c.yellow,
-        "deleted" => c.red,
-        "renamed" => c.magenta,
-        _ => c.green,
+fn reload_label_color(action: Option<git::ChangeAction>, c: &Colors) -> &'static str {
+    match action {
+        Some(git::ChangeAction::Added) => c.green,
+        Some(git::ChangeAction::Modified) => c.yellow,
+        Some(git::ChangeAction::Deleted) => c.red,
+        Some(git::ChangeAction::Renamed) => c.magenta,
+        None => c.green,
     }
 }
 
@@ -453,9 +451,10 @@ fn bind_with_fallback(
 }
 
 fn browser_url(addr: SocketAddr, target_path: &str) -> String {
-    let host = match addr.ip().to_string().as_str() {
-        "0.0.0.0" | "::" => DEFAULT_HOST.to_string(),
-        value => value.to_string(),
+    let host = if addr.ip().is_unspecified() {
+        DEFAULT_HOST.to_string()
+    } else {
+        addr.ip().to_string()
     };
     format!("http://{host}:{}{}", addr.port(), target_path)
 }
@@ -765,11 +764,23 @@ mod tests {
     #[test]
     fn reload_label_color_by_action() {
         let c = palette(true);
-        assert_eq!(reload_label_color("added", &c), c.green);
-        assert_eq!(reload_label_color("modified", &c), c.yellow);
-        assert_eq!(reload_label_color("deleted", &c), c.red);
-        assert_eq!(reload_label_color("renamed", &c), c.magenta);
-        assert_eq!(reload_label_color("change", &c), c.green);
+        assert_eq!(
+            reload_label_color(Some(git::ChangeAction::Added), &c),
+            c.green
+        );
+        assert_eq!(
+            reload_label_color(Some(git::ChangeAction::Modified), &c),
+            c.yellow
+        );
+        assert_eq!(
+            reload_label_color(Some(git::ChangeAction::Deleted), &c),
+            c.red
+        );
+        assert_eq!(
+            reload_label_color(Some(git::ChangeAction::Renamed), &c),
+            c.magenta
+        );
+        assert_eq!(reload_label_color(None, &c), c.green);
     }
 
     #[test]

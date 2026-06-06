@@ -561,10 +561,10 @@ fn valid(check: impl Fn(&str) -> bool, value: &str) -> String {
 }
 
 fn dirty_enabled(value: Option<&str>) -> bool {
-    matches!(
-        value.unwrap_or_default().trim().to_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
+    let value = value.unwrap_or_default().trim();
+    ["1", "true", "yes", "on"]
+        .iter()
+        .any(|candidate| value.eq_ignore_ascii_case(candidate))
 }
 
 fn is_safe_ref_arg(ref_name: &str) -> bool {
