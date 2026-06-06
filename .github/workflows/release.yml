@@ -186,13 +186,17 @@ jobs:
           cat checksums.txt
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --generate-notes \
+            dist/*.tar.gz \
+            dist/*.zip \
             dist/checksums.txt
-          generate_release_notes: true
 
   homebrew:
     name: Update Homebrew cask
