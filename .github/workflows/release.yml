@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,7 +51,7 @@ jobs:
         run: pnpm --dir web build
 
       - name: Upload web assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -68,7 +68,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download web assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -122,7 +122,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download web assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -161,7 +161,7 @@ jobs:
           Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
 
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.os_label }}-${{ matrix.arch_label }}
           path: |
@@ -169,15 +169,18 @@ jobs:
             dist/*.zip
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
 
   release:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Download archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: archive-*
           path: dist
@@ -207,14 +210,13 @@ jobs:
 
     steps:
       - name: Download archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: archive-*
           path: dist
           merge-multiple: true
 
       - name: Render cask
-        id: cask
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
