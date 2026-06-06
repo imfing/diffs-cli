@@ -220,20 +220,39 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          sha_arm="$(shasum -a 256 "dist/diffs_${version}_darwin_arm64.tar.gz" | awk '{print $1}')"
-          sha_intel="$(shasum -a 256 "dist/diffs_${version}_darwin_amd64.tar.gz" | awk '{print $1}')"
+          sha_darwin_arm="$(shasum -a 256 "dist/diffs_${version}_darwin_arm64.tar.gz" | awk '{print $1}')"
+          sha_darwin_intel="$(shasum -a 256 "dist/diffs_${version}_darwin_amd64.tar.gz" | awk '{print $1}')"
+          sha_linux_arm="$(shasum -a 256 "dist/diffs_${version}_linux_arm64.tar.gz" | awk '{print $1}')"
+          sha_linux_intel="$(shasum -a 256 "dist/diffs_${version}_linux_amd64.tar.gz" | awk '{print $1}')"
           mkdir -p out/Casks
           cat > out/Casks/diffs.rb <<EOF
           cask "diffs" do
             version "${version}"
 
-            on_arm do
-              sha256 "${sha_arm}"
-              url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_darwin_arm64.tar.gz"
+            on_macos do
+              on_arm do
+                sha256 "${sha_darwin_arm}"
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_darwin_arm64.tar.gz",
+                    verified: "github.com/imfing/diffs-cli/"
+              end
+              on_intel do
+                sha256 "${sha_darwin_intel}"
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_darwin_amd64.tar.gz",
+                    verified: "github.com/imfing/diffs-cli/"
+              end
             end
-            on_intel do
-              sha256 "${sha_intel}"
-              url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_darwin_amd64.tar.gz"
+
+            on_linux do
+              on_arm do
+                sha256 "${sha_linux_arm}"
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_linux_arm64.tar.gz",
+                    verified: "github.com/imfing/diffs-cli/"
+              end
+              on_intel do
+                sha256 "${sha_linux_intel}"
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_linux_amd64.tar.gz",
+                    verified: "github.com/imfing/diffs-cli/"
+              end
             end
 
             name "diffs"
@@ -243,8 +262,10 @@ jobs:
             binary "diffs"
 
             postflight do
-              system_command "/usr/bin/xattr",
-                             args: ["-dr", "com.apple.quarantine", "#{staged_path}/diffs"]
+              if OS.mac?
+                system_command "/usr/bin/xattr",
+                               args: ["-dr", "com.apple.quarantine", "#{staged_path}/diffs"]
+              end
             end
           end
           EOF
