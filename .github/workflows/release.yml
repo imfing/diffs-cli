@@ -132,25 +132,10 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked
 
-      - name: Package (unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          name="diffs-${{ matrix.target }}"
-          mkdir -p "dist/${name}"
-          cp target/release/diffs "dist/${name}/"
-          cp LICENSE README.md "dist/${name}/"
-          tar -C "dist/${name}" -czf "dist/${name}.tar.gz" diffs LICENSE README.md
-
-      - name: Package (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $name = "diffs-${{ matrix.target }}"
-          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
-          Copy-Item target/release/diffs.exe "dist/$name/"
-          Copy-Item LICENSE,README.md "dist/$name/"
-          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+      - name: Package archive
+        uses: ./.github/actions/package
+        with:
+          target: ${{ matrix.target }}
 
       - name: Upload archive
         uses: actions/upload-artifact@v7
