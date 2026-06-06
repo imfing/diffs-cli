@@ -26,6 +26,9 @@ lerna-debug.log*
 *.prof
 *.out
 
+# Rust
+/target/
+
 # Local configuration
 .diffs/
 .env
