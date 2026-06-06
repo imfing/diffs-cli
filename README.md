@@ -5,8 +5,6 @@
 
 Fast, beautiful diffs on the Go.
 
-<img src="assets/readme-gopher.jpg" alt="gopher reviewing code diffs" width="480">
-
 ## Motivation
 
 `diffs` is a local-first CLI in a single binary. Inspired by [DiffsHub](https://diffshub.com) from [pierre.computer](https://pierre.computer/), it brings a calmer review experience to your working tree and GitHub pull request.
@@ -107,7 +105,7 @@ Use `reply`, `resolve`, and `reopen` to update a thread. Pass `--dir /path/to/re
 
 ## Build from source
 
-Requires Go 1.26+ and pnpm.
+Requires Rust (current stable, 1.96+) and pnpm/Node.
 
 ```sh
 pnpm install
