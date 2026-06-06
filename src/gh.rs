@@ -766,6 +766,28 @@ mutation($threadID: ID!) {
 mod tests {
     use super::*;
 
+    fn review_comment(id: &str, database_id: i64) -> ReviewComment {
+        ReviewComment {
+            id: id.to_string(),
+            database_id,
+            author: None,
+            body: String::new(),
+            url: String::new(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn comment_id_prefers_node_id_then_database_id() {
+        // Node id present: used verbatim.
+        assert_eq!(comment_id(&review_comment("PRRC_node", 55)), "PRRC_node");
+        // Node id absent: fall back to the database id (the match path
+        // add_pull_request_comment relies on to find a just-created comment).
+        assert_eq!(comment_id(&review_comment("", 55)), "55");
+        // Neither available: empty (unmatchable).
+        assert_eq!(comment_id(&review_comment("", 0)), "");
+    }
+
     #[test]
     fn parse_pr_target_paths_and_hosts() {
         // (input, want_path, want_host)

@@ -182,9 +182,9 @@ const READ_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Serves `router` over `listener` with a per-connection header-read timeout.
 ///
-/// `axum::serve` exposes no header-read deadline, so we drive hyper's connection
-/// builder directly. The timeout is enforced before routing (a tower request
-/// timeout would run too late and would also break the long-lived SSE stream).
+/// `axum::serve` exposes no header-read deadline, so we drive hyper directly.
+/// The timeout fires before routing; a tower request timeout would run too late
+/// and would also break the long-lived SSE stream.
 pub async fn serve_router(
     listener: tokio::net::TcpListener,
     router: axum::Router,
@@ -203,10 +203,8 @@ pub async fn serve_router(
             builder
                 .timer(TokioTimer::new())
                 .header_read_timeout(READ_HEADER_TIMEOUT);
-            // Per-connection errors (resets, header timeouts) are expected and
-            // isolated to that connection, so they are intentionally dropped.
-            // `with_upgrades` keeps the SSE stream (and any future websockets)
-            // working.
+            // Per-connection errors are isolated to that connection; drop them.
+            // `with_upgrades` keeps the SSE stream working.
             let _ = builder.serve_connection(io, service).with_upgrades().await;
         });
     }
@@ -897,6 +895,76 @@ fn is_structurally_ignored(path: &FsPath) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dirty_enabled_accepts_only_truthy_aliases() {
+        for truthy in ["1", "true", "yes", "on", "YES", "On", " true ", "\tTRUE\n"] {
+            assert!(dirty_enabled(Some(truthy)), "{truthy:?} should be truthy");
+        }
+        for falsy in [
+            Some("0"),
+            Some("false"),
+            Some("no"),
+            Some(""),
+            Some("enabled"),
+            None,
+        ] {
+            assert!(!dirty_enabled(falsy), "{falsy:?} should be falsy");
+        }
+    }
+
+    // Drives the real hyper accept loop over a TCP socket to prove the
+    // header-read timeout is wired up. A missing TokioTimer compiles fine but
+    // panics at runtime, so only a live test catches it.
+    #[tokio::test]
+    async fn serve_router_enforces_header_read_timeout() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+
+        let router = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = serve_router(listener, router).await;
+        });
+
+        // A well-formed request is served normally.
+        let mut ok = TcpStream::connect(addr).await.unwrap();
+        ok.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        ok.read_to_end(&mut buf).await.unwrap();
+        let resp = String::from_utf8_lossy(&buf);
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "unexpected response: {resp}"
+        );
+
+        // A client that opens a connection but never finishes its request
+        // headers is dropped by the header-read timeout, not left open forever.
+        let start = std::time::Instant::now();
+        let mut slow = TcpStream::connect(addr).await.unwrap();
+        slow.write_all(b"GET / HTTP/1.1\r\n").await.unwrap(); // never terminated
+        let mut sink = Vec::new();
+        let read = tokio::time::timeout(
+            READ_HEADER_TIMEOUT + Duration::from_secs(3),
+            slow.read_to_end(&mut sink),
+        )
+        .await
+        .expect("server did not close the idle connection within the timeout window")
+        .unwrap();
+        assert_eq!(
+            read, 0,
+            "expected EOF from server-side close, got {read} bytes"
+        );
+        // Confirm it was the timeout firing, not an instant reject.
+        assert!(
+            start.elapsed() >= Duration::from_secs(3),
+            "connection closed too early ({:?}); timeout may not be enforced",
+            start.elapsed()
+        );
+    }
 
     #[test]
     fn is_safe_ref_arg_accepts_branch_like_refs() {

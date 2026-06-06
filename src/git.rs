@@ -369,6 +369,43 @@ mod tests {
     }
 
     #[test]
+    fn branch_reads_unborn_branch_before_first_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        // Fresh repo whose HEAD points at an unborn branch (no commits yet).
+        git(dir.path(), &["init", "-b", "trunk"]);
+
+        let repo = discover(dir.path()).unwrap();
+        assert_eq!(branch_for_repo(&repo).unwrap(), "trunk");
+        // The infallible wrapper must agree (it backs comment branch scoping).
+        assert_eq!(branch(dir.path()), "trunk");
+    }
+
+    #[test]
+    fn changed_files_labels_deletions_and_renames() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "user.email", "diffs@example.com"]);
+        git(root, &["config", "user.name", "Diffs Test"]);
+        fs::write(root.join("gone.txt"), "delete me\n").unwrap();
+        // Long unique content so libgit2 detects the rename at 100% similarity.
+        let body: String = (0..20).map(|i| format!("line {i}\n")).collect();
+        fs::write(root.join("old.txt"), &body).unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-m", "initial"]);
+
+        fs::remove_file(root.join("gone.txt")).unwrap();
+        git(root, &["mv", "old.txt", "new.txt"]);
+
+        let files = changed_files(root).unwrap();
+        let action = |path: &str| files.iter().find(|f| f.path == path).map(|f| f.action);
+        assert_eq!(action("gone.txt"), Some(ChangeAction::Deleted), "{files:?}");
+        assert_eq!(action("new.txt"), Some(ChangeAction::Renamed), "{files:?}");
+        // A rename must not also surface the old path as a separate change.
+        assert_eq!(action("old.txt"), None, "{files:?}");
+    }
+
+    #[test]
     fn patch_lines_include_unified_diff_origin_prefixes() {
         let repo = tempfile::tempdir().unwrap();
         git(repo.path(), &["init"]);

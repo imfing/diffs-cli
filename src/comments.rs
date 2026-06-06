@@ -597,6 +597,47 @@ mod tests {
     }
 
     #[test]
+    fn delete_and_update_are_branch_scoped_and_persist_branch() {
+        let dir = new_repo();
+        let store = Store::new(dir.path()).unwrap();
+        let thread = store
+            .add_thread(AddThreadInput {
+                path: "a.go".into(),
+                line: 1,
+                body: "main".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(thread.branch, "main");
+
+        // From another branch the thread is invisible: mutations and deletes
+        // must not touch a different branch's threads.
+        run_git(dir.path(), &["checkout", "-b", "feature/comments"]);
+        assert!(matches!(
+            store.delete(&thread.id).unwrap_err(),
+            CommentError::NotFound
+        ));
+        assert!(matches!(
+            store.resolve(&thread.id).unwrap_err(),
+            CommentError::NotFound
+        ));
+
+        // Back on the original branch it is intact and still scoped to "main".
+        // `main` is unborn here (no commit), so re-point HEAD via symbolic-ref;
+        // `checkout` would fail on a ref that never existed.
+        run_git(dir.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, thread.id);
+
+        // The branch must be stamped on the persisted record (guards the
+        // under-lock stamping in add_thread against a revert to branch:"").
+        let raw = fs::read_to_string(store.path()).unwrap();
+        assert!(raw.contains("\"branch\": \"main\""), "{raw}");
+        assert!(!raw.contains("\"branch\": \"\""), "{raw}");
+    }
+
+    #[test]
     fn store_returns_not_found_for_other_branch() {
         let dir = new_repo();
         let store = Store::new(dir.path()).unwrap();
