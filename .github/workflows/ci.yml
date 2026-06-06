@@ -92,7 +92,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
     name: Test
@@ -123,4 +123,56 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked
+
+  snapshot:
+    name: Release build (${{ matrix.os_label }})
+    needs: web
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os_label: linux
+          - runner: windows-latest
+            os_label: windows
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download web assets
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="diffs_snapshot_${{ matrix.os_label }}_amd64"
+          mkdir -p "dist/${name}"
+          cp target/release/diffs "dist/${name}/"
+          cp LICENSE README.md "dist/${name}/"
+          tar -C "dist/${name}" -czf "dist/${name}.tar.gz" diffs LICENSE README.md
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "diffs_snapshot_${{ matrix.os_label }}_amd64"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/release/diffs.exe "dist/$name/"
+          Copy-Item LICENSE,README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
