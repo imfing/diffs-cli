@@ -2,8 +2,8 @@
 //!
 //! The frontend's `@pierre/diffs` parser consumes git's exact unified-diff text,
 //! so the libgit2-backed `local_diff`/`branch_diff` must reproduce it. The oracle
-//! here is **git itself** (not the Go binary) — git is the ground truth the parser
-//! targets, and this keeps the harness valid after the Go sources are removed.
+//! here is **git itself**. Git is the ground truth the parser targets, and this
+//! keeps the harness valid without depending on another implementation.
 //!
 //! Comparison is per-file: libgit2 emits every file (including untracked) in one
 //! path-sorted pass, whereas git's `diff HEAD` + per-file `--no-index` untracked

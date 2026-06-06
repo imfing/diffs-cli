@@ -334,11 +334,11 @@ fn comment_side(side: &str) -> &str {
     }
 }
 
-// --- GitHub review-thread CRUD (ported from internal/server/github_comments.go) ---
+// --- GitHub review-thread CRUD ---
 
 // GitHub's GraphQL API returns `null` for fields like `line`, `path`, and
-// `endCursor` (e.g. outdated or file-level threads). Go's encoding/json maps
-// null to the zero value silently; serde errors unless we coalesce it here.
+// `endCursor` (e.g. outdated or file-level threads). serde errors unless we
+// coalesce those nulls here.
 fn null_to_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,

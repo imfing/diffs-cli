@@ -14,7 +14,7 @@ const DEFAULT_PORT: u16 = 3433;
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// Error that signals a non-zero exit without printing anything (help/diagnostics
-/// were already written). Mirrors Go's `quietError`.
+/// were already written).
 #[derive(Debug)]
 pub struct QuietExit;
 
@@ -203,7 +203,7 @@ async fn run_server_target(
     server::serve_router(listener, running.router).await
 }
 
-// --- Terminal output (ported from cmd/diffs/output.go) ---
+// --- Terminal output ---
 
 struct Colors {
     reset: &'static str,
@@ -386,7 +386,7 @@ fn reload_label_color(action: Option<git::ChangeAction>, c: &Colors) -> &'static
     }
 }
 
-/// Builds the human label for the served target (ported from `targetLabel`).
+/// Builds the human label for the served target.
 fn target_label(target_path: &str, cwd: &std::path::Path) -> String {
     if target_path == "/local" {
         let branch = git::branch(cwd);

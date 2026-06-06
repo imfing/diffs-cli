@@ -176,9 +176,8 @@ pub async fn serve(addr: SocketAddr, cfg: ServerConfig) -> anyhow::Result<()> {
     serve_router(listener, running.router).await
 }
 
-/// Header-read timeout for incoming connections, mirroring Go's
-/// `http.Server.ReadHeaderTimeout`. Bounds the slow-loris window where a client
-/// opens a connection but never finishes sending request headers.
+/// Header-read timeout for incoming connections. Bounds the slow-loris window
+/// where a client opens a connection but never finishes sending request headers.
 const READ_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Serves `router` over `listener` with a per-connection header-read timeout.
@@ -597,9 +596,9 @@ enum CommentScope {
     Invalid,
 }
 
-/// Mirrors Go's `commentTarget`: empty org/repo/number means local comments;
-/// otherwise the trio must pass the same validators as the PR routes, or the
-/// request is rejected with 400 (`Invalid`).
+/// Empty org/repo/number means local comments; otherwise the trio must pass the
+/// same validators as the PR routes, or the request is rejected with 400
+/// (`Invalid`).
 fn comment_scope(target: &CommentTargetQuery) -> CommentScope {
     let org = target.org.as_deref().unwrap_or_default();
     let repo = target.repo.as_deref().unwrap_or_default();
@@ -684,7 +683,7 @@ fn mime_for(path: &str) -> &'static str {
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(150);
 
 // Git-internal files whose changes mean the repository state moved (branch
-// switch, commit, stage), mirroring the Go watcher's isGitStateEvent set.
+// switch, commit, stage).
 const GIT_STATE_ENTRIES: [&str; 8] = [
     "HEAD",
     "index",
@@ -714,7 +713,7 @@ fn start_watcher(
     // notify invokes the event handler on its own (non-tokio) thread, so the
     // handler only classifies paths and forwards a tick over a sync channel. A
     // dedicated debounce thread coalesces bursts and resolves the changed files
-    // 150ms after the last event, matching the Go watcher's trailing timer.
+    // 150ms after the last event.
     let (tx, rx) = mpsc::channel::<WatchTick>();
     let status_cwd = cwd.clone();
     std::thread::spawn(move || {
@@ -736,7 +735,7 @@ fn start_watcher(
             }
 
             // Resolve which of the changed paths git actually reports, then
-            // gate the broadcast exactly like Go's notifyChange.
+            // broadcast only when the effective repository state changed.
             let status = repo.as_ref().and_then(|repo| git::status_map(repo).ok());
             let changed = match &status {
                 Some(map) => changed_files_for_events(&pending, map),
@@ -829,9 +828,9 @@ fn is_git_state_file(git_dir: &FsPath, path: &FsPath) -> bool {
     }
 }
 
-/// Intersects the changed event paths with git's reported status (Go's
-/// `changedFilesForEvents`): an event path matches directly, or matches every
-/// status entry beneath it when the event was on a directory.
+/// Intersects the changed event paths with git's reported status: an event path
+/// matches directly, or matches every status entry beneath it when the event was
+/// on a directory.
 fn changed_files_for_events(
     events: &BTreeSet<String>,
     status: &BTreeMap<String, git::ChangeAction>,
@@ -863,7 +862,7 @@ fn changed_files_for_events(
 }
 
 /// Fallback when `git status` is unavailable: report every event path as
-/// modified (Go's `changedFilesFromEvents`).
+/// modified.
 fn changed_files_from_events(events: &BTreeSet<String>) -> Vec<git::ChangedFile> {
     events
         .iter()

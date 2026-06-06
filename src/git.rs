@@ -41,9 +41,8 @@ impl ChangeAction {
     }
 }
 
-/// Maps a git2 status to a `ChangeAction` using the same precedence as the Go
-/// watcher's `gitStatusAction`: deletion, then rename/copy, then addition,
-/// otherwise modification.
+/// Maps a git2 status to a `ChangeAction`: deletion, then rename/copy, then
+/// addition, otherwise modification.
 fn status_action(status: Status) -> ChangeAction {
     if status.intersects(Status::INDEX_DELETED | Status::WT_DELETED) {
         ChangeAction::Deleted
@@ -282,9 +281,8 @@ pub fn changed_files(cwd: impl AsRef<Path>) -> Result<Vec<ChangedFile>> {
     Ok(files)
 }
 
-/// Builds a map of repository-relative (forward-slash) path → change action,
-/// mirroring Go's `gitStatus`. Used by the watcher to label changed files for
-/// the reload logger.
+/// Builds a map of repository-relative (forward-slash) path to change action.
+/// Used by the watcher to label changed files for the reload logger.
 pub fn status_map(repo: &Repository) -> Result<BTreeMap<String, ChangeAction>> {
     let statuses = repo.statuses(Some(&mut status_options()))?;
     let mut map = BTreeMap::new();
