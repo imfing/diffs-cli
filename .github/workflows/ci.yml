@@ -126,16 +126,16 @@ jobs:
         run: cargo test --all-targets --locked
 
   snapshot:
-    name: Release build (${{ matrix.os_label }})
+    name: Release build (${{ matrix.target }})
     needs: web
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
-            os_label: linux
+            target: x86_64-unknown-linux-gnu
           - runner: windows-latest
-            os_label: windows
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -161,7 +161,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          name="diffs_snapshot_${{ matrix.os_label }}_amd64"
+          name="diffs-${{ matrix.target }}"
           mkdir -p "dist/${name}"
           cp target/release/diffs "dist/${name}/"
           cp LICENSE README.md "dist/${name}/"
@@ -171,7 +171,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $name = "diffs_snapshot_${{ matrix.os_label }}_amd64"
+          $name = "diffs-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item target/release/diffs.exe "dist/$name/"
           Copy-Item LICENSE,README.md "dist/$name/"

@@ -91,30 +91,24 @@ jobs:
         run: cargo test --all-targets --locked
 
   build:
-    name: Build ${{ matrix.os_label }}_${{ matrix.arch_label }}
+    name: Build ${{ matrix.target }}
     needs: check
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
-            os_label: linux
-            arch_label: amd64
+            target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
-            os_label: linux
-            arch_label: arm64
+            target: aarch64-unknown-linux-gnu
           - runner: macos-13
-            os_label: darwin
-            arch_label: amd64
+            target: x86_64-apple-darwin
           - runner: macos-14
-            os_label: darwin
-            arch_label: arm64
+            target: aarch64-apple-darwin
           - runner: windows-latest
-            os_label: windows
-            arch_label: amd64
+            target: x86_64-pc-windows-msvc
           - runner: windows-11-arm
-            os_label: windows
-            arch_label: arm64
+            target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -133,7 +127,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os_label }}-${{ matrix.arch_label }}
+          key: ${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --release --locked
@@ -142,8 +136,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          name="diffs_${version}_${{ matrix.os_label }}_${{ matrix.arch_label }}"
+          name="diffs-${{ matrix.target }}"
           mkdir -p "dist/${name}"
           cp target/release/diffs "dist/${name}/"
           cp LICENSE README.md "dist/${name}/"
@@ -153,8 +146,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
-          $name = "diffs_${version}_${{ matrix.os_label }}_${{ matrix.arch_label }}"
+          $name = "diffs-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item target/release/diffs.exe "dist/$name/"
           Copy-Item LICENSE,README.md "dist/$name/"
@@ -163,7 +155,7 @@ jobs:
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:
-          name: archive-${{ matrix.os_label }}-${{ matrix.arch_label }}
+          name: archive-${{ matrix.target }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -220,10 +212,10 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          sha_darwin_arm="$(shasum -a 256 "dist/diffs_${version}_darwin_arm64.tar.gz" | awk '{print $1}')"
-          sha_darwin_intel="$(shasum -a 256 "dist/diffs_${version}_darwin_amd64.tar.gz" | awk '{print $1}')"
-          sha_linux_arm="$(shasum -a 256 "dist/diffs_${version}_linux_arm64.tar.gz" | awk '{print $1}')"
-          sha_linux_intel="$(shasum -a 256 "dist/diffs_${version}_linux_amd64.tar.gz" | awk '{print $1}')"
+          sha_darwin_arm="$(shasum -a 256 "dist/diffs-aarch64-apple-darwin.tar.gz" | awk '{print $1}')"
+          sha_darwin_intel="$(shasum -a 256 "dist/diffs-x86_64-apple-darwin.tar.gz" | awk '{print $1}')"
+          sha_linux_arm="$(shasum -a 256 "dist/diffs-aarch64-unknown-linux-gnu.tar.gz" | awk '{print $1}')"
+          sha_linux_intel="$(shasum -a 256 "dist/diffs-x86_64-unknown-linux-gnu.tar.gz" | awk '{print $1}')"
           mkdir -p out/Casks
           cat > out/Casks/diffs.rb <<EOF
           cask "diffs" do
@@ -232,12 +224,12 @@ jobs:
             on_macos do
               on_arm do
                 sha256 "${sha_darwin_arm}"
-                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_darwin_arm64.tar.gz",
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs-aarch64-apple-darwin.tar.gz",
                     verified: "github.com/imfing/diffs-cli/"
               end
               on_intel do
                 sha256 "${sha_darwin_intel}"
-                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_darwin_amd64.tar.gz",
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs-x86_64-apple-darwin.tar.gz",
                     verified: "github.com/imfing/diffs-cli/"
               end
             end
@@ -245,12 +237,12 @@ jobs:
             on_linux do
               on_arm do
                 sha256 "${sha_linux_arm}"
-                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_linux_arm64.tar.gz",
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs-aarch64-unknown-linux-gnu.tar.gz",
                     verified: "github.com/imfing/diffs-cli/"
               end
               on_intel do
                 sha256 "${sha_linux_intel}"
-                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs_#{version}_linux_amd64.tar.gz",
+                url "https://github.com/imfing/diffs-cli/releases/download/v#{version}/diffs-x86_64-unknown-linux-gnu.tar.gz",
                     verified: "github.com/imfing/diffs-cli/"
               end
             end
