@@ -316,11 +316,44 @@ pub fn default_branch(cwd: impl AsRef<Path>) -> Option<String> {
 /// working tree, or any lookup error, are treated as not ignored.
 pub fn is_path_ignored(repo: &Repository, path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();
-    let relative = repo
-        .workdir()
-        .and_then(|workdir| path.strip_prefix(workdir).ok())
-        .unwrap_or(path);
-    repo.is_path_ignored(relative).unwrap_or(false)
+    let Some(workdir) = repo.workdir() else {
+        return false;
+    };
+    let Some(relative) = workdir_relative_path(workdir, path) else {
+        return false;
+    };
+    repo.is_path_ignored(Path::new(&relative)).unwrap_or(false)
+}
+
+fn workdir_relative_path(workdir: &Path, path: &Path) -> Option<String> {
+    if let Ok(relative) = path.strip_prefix(workdir) {
+        return Some(git_path(relative));
+    }
+
+    if let Ok(workdir) = workdir.canonicalize()
+        && let Ok(relative) = path.strip_prefix(workdir)
+    {
+        return Some(git_path(relative));
+    }
+
+    strip_git_path_prefix(&git_path(path), &git_path(workdir))
+}
+
+fn git_path(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    path.strip_prefix("//?/").unwrap_or(&path).to_string()
+}
+
+fn strip_git_path_prefix(path: &str, workdir: &str) -> Option<String> {
+    let workdir = workdir.trim_end_matches('/');
+    if path.eq_ignore_ascii_case(workdir) {
+        return Some(String::new());
+    }
+
+    let prefix = format!("{workdir}/");
+    path.get(prefix.len()..)
+        .filter(|_| path[..prefix.len()].eq_ignore_ascii_case(&prefix))
+        .map(str::to_string)
 }
 
 #[cfg(test)]
