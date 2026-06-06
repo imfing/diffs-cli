@@ -3,7 +3,9 @@
 [![CI](https://github.com/imfing/diffs-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/imfing/diffs-cli/actions/workflows/ci.yml)
 [![Release](https://github.com/imfing/diffs-cli/actions/workflows/release.yml/badge.svg)](https://github.com/imfing/diffs-cli/actions/workflows/release.yml)
 
-Fast, beautiful diffs on the Go.
+A tiny CLI for fast, beautiful local-first diffs in the browser.
+
+<img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="720">
 
 ## Motivation
 
@@ -40,8 +42,6 @@ diffs pr                    # PR for the current branch
 diffs pr 123                # PR in the current repo
 diffs pr org/repo/pull/123  # PR in any repo
 ```
-
-<img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="800">
 
 Review the current branch against a base locally:
 

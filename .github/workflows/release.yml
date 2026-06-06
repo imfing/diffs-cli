@@ -235,7 +235,7 @@ jobs:
             end
 
             name "diffs"
-            desc "Fast, beautiful diffs on the Go"
+            desc "A tiny CLI for fast, beautiful local-first diffs in the browser"
             homepage "https://github.com/imfing/diffs-cli"
 
             binary "diffs"
