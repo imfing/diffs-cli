@@ -3,9 +3,9 @@
 [![CI](https://github.com/imfing/diffs-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/imfing/diffs-cli/actions/workflows/ci.yml)
 [![Release](https://github.com/imfing/diffs-cli/actions/workflows/release.yml/badge.svg)](https://github.com/imfing/diffs-cli/actions/workflows/release.yml)
 
-Fast, beautiful diffs on the Go.
+A tiny CLI for fast, beautiful local-first diffs in the browser.
 
-<img src="assets/readme-gopher.jpg" alt="gopher reviewing code diffs" width="480">
+<img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="720">
 
 ## Motivation
 
@@ -42,8 +42,6 @@ diffs pr                    # PR for the current branch
 diffs pr 123                # PR in the current repo
 diffs pr org/repo/pull/123  # PR in any repo
 ```
-
-<img src="assets/diffs-screenshot.jpg" alt="diffs UI screenshot" width="800">
 
 Review the current branch against a base locally:
 
@@ -107,7 +105,7 @@ Use `reply`, `resolve`, and `reopen` to update a thread. Pass `--dir /path/to/re
 
 ## Build from source
 
-Requires Go 1.26+ and pnpm.
+Requires Rust (current stable, 1.96+) and pnpm/Node.
 
 ```sh
 pnpm install

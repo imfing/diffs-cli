@@ -1,18 +1,18 @@
 {
   "name": "diffs-cli",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "build": "pnpm --dir web build && rm -rf internal/webassets/dist && cp -R web/dist internal/webassets/dist && touch internal/webassets/dist/.gitkeep && go build -o bin/diffs ./cmd/diffs",
-    "dev": "go run ./cmd/diffs",
-    "format": "pnpm format:go && pnpm format:web",
-    "format:go": "gofmt -w $(git ls-files '*.go' ':!:internal/webassets/dist/**')",
+    "build": "pnpm --dir web build && cargo build --release && scripts/copy-release-binary.sh",
+    "dev": "cargo run --",
+    "format": "pnpm format:rust && pnpm format:web",
+    "format:rust": "cargo fmt",
     "format:web": "pnpm --dir web format",
-    "lint": "pnpm lint:web && pnpm lint:go",
-    "lint:go": "go tool golangci-lint run",
+    "lint": "pnpm lint:web && pnpm lint:rust",
+    "lint:rust": "cargo clippy -- -D warnings",
     "lint:web": "pnpm --dir web lint",
-    "test": "pnpm --dir web lint && pnpm --dir web build && rm -rf internal/webassets/dist && cp -R web/dist internal/webassets/dist && touch internal/webassets/dist/.gitkeep && go test ./..."
+    "test": "pnpm --dir web lint && pnpm --dir web build && cargo test"
   }
 }

@@ -2,8 +2,6 @@
 /bin/
 /dist/
 /coverage/
-/internal/webassets/dist/*
-!/internal/webassets/dist/.gitkeep
 /web/dist/
 /web/dist-ssr/
 
@@ -21,10 +19,8 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Go
-*.test
-*.prof
-*.out
+# Rust
+/target/
 
 # Local configuration
 .diffs/
