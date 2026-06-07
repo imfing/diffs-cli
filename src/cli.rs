@@ -1,4 +1,4 @@
-use crate::{comments, config, gh, git, server};
+use crate::{comments, config, gh, git, guides, server};
 use anyhow::{Context, bail};
 use clap::builder::styling::AnsiColor;
 use clap::{Args, Parser, Subcommand};
@@ -95,6 +95,24 @@ Examples:
   diffs comments resolve <thread-id>
 ";
 
+const GUIDE_AFTER_HELP: &str = "\
+Guides are stored in .diffs/guides/<slug>.json in the target repo; keep
+.diffs/ git-ignored. Pass --json to any subcommand for machine-readable output.
+
+Examples:
+  # Create a blank guide (derive slug from branch name)
+  diffs guide create
+
+  # Claim files into a new step, reading Markdown body from stdin
+  diffs guide steps add src/model.rs src/schema.rs --title \"Data model\" --content -
+
+  # List all guides for the current branch
+  diffs guide list
+
+  # Import a complete guide from a JSON file via stdin
+  diffs guide create --from-json - < guide-export.json
+";
+
 /// Error that signals a non-zero exit without printing anything (help/diagnostics
 /// were already written).
 #[derive(Debug)]
@@ -167,6 +185,9 @@ enum Command {
     #[command(about = "Manage local review comments")]
     #[command(after_help = COMMENTS_AFTER_HELP)]
     Comments(CommentsCommand),
+    #[command(about = "Author guided diff walkthroughs")]
+    #[command(after_help = GUIDE_AFTER_HELP)]
+    Guide(GuideCommand),
     #[command(about = "Print version information")]
     Version,
 }
@@ -234,6 +255,102 @@ enum CommentSubcommand {
     },
 }
 
+#[derive(Args)]
+struct GuideCommand {
+    /// Output results as JSON
+    #[arg(long, global = true)]
+    json: bool,
+    #[command(subcommand)]
+    command: GuideSubcommand,
+}
+
+#[derive(Subcommand)]
+enum GuideSubcommand {
+    #[command(about = "List guides for the current branch")]
+    List,
+    #[command(about = "Show a guide's details and steps")]
+    Show {
+        /// Slug of the guide to show (defaults to the current branch's single guide)
+        #[arg(long, value_name = "SLUG")]
+        slug: Option<String>,
+    },
+    #[command(about = "Create a new guide (blank or imported from JSON)")]
+    Create {
+        /// Slug for the new guide (derived from the branch name when omitted)
+        #[arg(long, value_name = "SLUG")]
+        slug: Option<String>,
+        /// Read the guide JSON from a file ("-" reads from stdin)
+        #[arg(long = "from-json", value_name = "FILE")]
+        from_json: Option<String>,
+    },
+    #[command(about = "Delete a guide")]
+    Delete {
+        /// Slug of the guide to delete (defaults to the current branch's single guide)
+        #[arg(long, value_name = "SLUG")]
+        slug: Option<String>,
+    },
+    #[command(about = "Manage steps within a guide")]
+    Steps(GuideStepsCommand),
+}
+
+#[derive(Args)]
+struct GuideStepsCommand {
+    #[command(subcommand)]
+    command: GuideStepsSubcommand,
+}
+
+#[derive(Subcommand)]
+enum GuideStepsSubcommand {
+    #[command(about = "Add a new step claiming one or more files")]
+    Add {
+        /// Files to claim for this step (repository-relative paths)
+        #[arg(value_name = "FILE", required = true)]
+        files: Vec<String>,
+        /// Title of the new step
+        #[arg(long)]
+        title: String,
+        /// Step body in Markdown ("-" reads from stdin)
+        #[arg(long, value_name = "TEXT")]
+        content: String,
+        /// Slug of the guide to update (defaults to the current branch's single guide)
+        #[arg(long)]
+        slug: Option<String>,
+    },
+    #[command(about = "List steps in a guide")]
+    List {
+        /// Slug of the guide (defaults to the current branch's single guide)
+        #[arg(long)]
+        slug: Option<String>,
+    },
+    #[command(about = "Update a step's title, body, or claimed files")]
+    Update {
+        /// ID of the step to update
+        #[arg(value_name = "STEP_ID")]
+        step_id: String,
+        /// Replacement files for this step (replaces the whole set when given)
+        #[arg(value_name = "FILE")]
+        files: Vec<String>,
+        /// New title for the step
+        #[arg(long)]
+        title: Option<String>,
+        /// New body in Markdown ("-" reads from stdin)
+        #[arg(long, value_name = "TEXT")]
+        content: Option<String>,
+        /// Slug of the guide to update (defaults to the current branch's single guide)
+        #[arg(long)]
+        slug: Option<String>,
+    },
+    #[command(about = "Remove a step from a guide")]
+    Remove {
+        /// ID of the step to remove
+        #[arg(value_name = "STEP_ID")]
+        step_id: String,
+        /// Slug of the guide (defaults to the current branch's single guide)
+        #[arg(long)]
+        slug: Option<String>,
+    },
+}
+
 pub async fn run(started: Instant) -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -264,6 +381,7 @@ pub async fn run(started: Instant) -> anyhow::Result<()> {
             run_server_target(&cli.dir, &serve, gh_host(None), &target, true, started).await
         }
         Some(Command::Comments(command)) => run_comments(&cli.dir, command),
+        Some(Command::Guide(command)) => run_guide(&cli.dir, command),
         Some(Command::Version) => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -698,6 +816,184 @@ fn run_comments(dir: &PathBuf, command: CommentsCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn run_guide(dir: &PathBuf, command: GuideCommand) -> anyhow::Result<()> {
+    let store = guides::Store::new(dir)?;
+    let as_json = command.json;
+    match command.command {
+        GuideSubcommand::List => {
+            let guide_list = store.list_for_branch()?;
+            if as_json {
+                print_json(&serde_json::json!({ "guides": guide_list }))?;
+            } else if guide_list.is_empty() {
+                println!("No guides for the current branch.");
+            } else {
+                println!("SLUG\tTITLE\tSTEPS\tFILES\tUPDATED");
+                for g in &guide_list {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}",
+                        g.slug,
+                        g.title,
+                        g.steps,
+                        g.files,
+                        g.updated_at.format("%Y-%m-%dT%H:%M:%SZ"),
+                    );
+                }
+                let _ = io::stdout().flush();
+            }
+        }
+        GuideSubcommand::Show { slug } => {
+            let slug = store.resolve_slug(slug.as_deref())?;
+            let guide = store.get(&slug)?;
+            if as_json {
+                println!("{}", serde_json::to_string_pretty(&guide)?);
+            } else {
+                println!("{}", guide.title);
+                println!("slug:   {}", guide.slug);
+                println!("branch: {}", guide.branch);
+                if !guide.base.is_empty() {
+                    println!("base:   {}", guide.base);
+                }
+                if guide.steps.is_empty() {
+                    println!("(no steps)");
+                } else {
+                    println!("\nID\tTITLE\tFILES");
+                    for step in &guide.steps {
+                        println!(
+                            "{}\t{}\t{}",
+                            step.id,
+                            step.title,
+                            step.files.join(", ")
+                        );
+                    }
+                }
+                let _ = io::stdout().flush();
+            }
+        }
+        GuideSubcommand::Create { slug, from_json } => {
+            let input = if let Some(spec) = from_json {
+                let text = read_input(&spec)?;
+                let mut parsed: guides::CreateInput = serde_json::from_str(&text)?;
+                // Explicit --slug wins; else JSON's slug if non-empty; else derive from branch.
+                let resolved_slug = store.create_slug(
+                    slug.as_deref()
+                        .or(if parsed.slug.is_empty() { None } else { Some(parsed.slug.as_str()) }),
+                )?;
+                parsed.slug = resolved_slug;
+                parsed
+            } else {
+                let resolved_slug = store.create_slug(slug.as_deref())?;
+                let title = resolved_slug.clone();
+                guides::CreateInput {
+                    slug: resolved_slug,
+                    title,
+                    ..Default::default()
+                }
+            };
+            let guide = store.create(input)?;
+            if as_json {
+                println!("{}", serde_json::to_string_pretty(&guide)?);
+            } else {
+                println!("Created guide {} ({} steps)", guide.slug, guide.steps.len());
+            }
+        }
+        GuideSubcommand::Delete { slug } => {
+            let slug = store.resolve_slug(slug.as_deref())?;
+            store.delete(&slug)?;
+            if as_json {
+                print_json(&serde_json::json!({ "slug": slug, "deleted": true }))?;
+            } else {
+                println!("Deleted guide {slug}");
+            }
+        }
+        GuideSubcommand::Steps(steps) => match steps.command {
+            GuideStepsSubcommand::Add {
+                files,
+                title,
+                content,
+                slug,
+            } => {
+                let slug = store.resolve_slug(slug.as_deref())?;
+                let file = store.add_step(
+                    &slug,
+                    guides::AddStepInput {
+                        title,
+                        body: body_from_flag(content)?,
+                        files,
+                    },
+                )?;
+                let step = file.steps.last().expect("add_step returned empty steps");
+                if as_json {
+                    println!("{}", serde_json::to_string_pretty(step)?);
+                } else {
+                    println!("{}\t{}\t{}", step.id, step.title, step.files.join(", "));
+                }
+            }
+            GuideStepsSubcommand::List { slug } => {
+                let slug = store.resolve_slug(slug.as_deref())?;
+                let guide = store.get(&slug)?;
+                if as_json {
+                    print_json(&serde_json::json!({ "steps": guide.steps }))?;
+                } else if guide.steps.is_empty() {
+                    println!("No steps in guide {slug}.");
+                } else {
+                    println!("ID\tTITLE\tFILES");
+                    for step in &guide.steps {
+                        println!("{}\t{}\t{}", step.id, step.title, step.files.join(", "));
+                    }
+                    let _ = io::stdout().flush();
+                }
+            }
+            GuideStepsSubcommand::Update {
+                step_id,
+                files,
+                title,
+                content,
+                slug,
+            } => {
+                let slug = store.resolve_slug(slug.as_deref())?;
+                let input = guides::UpdateStepInput {
+                    title,
+                    body: content.map(body_from_flag).transpose()?,
+                    files: if files.is_empty() { None } else { Some(files) },
+                };
+                let file = store.update_step(&slug, &step_id, input)?;
+                let step = file
+                    .steps
+                    .iter()
+                    .find(|s| s.id == step_id)
+                    .expect("update_step returned file without the updated step");
+                if as_json {
+                    println!("{}", serde_json::to_string_pretty(step)?);
+                } else {
+                    println!("{}\t{}\t{}", step.id, step.title, step.files.join(", "));
+                }
+            }
+            GuideStepsSubcommand::Remove { step_id, slug } => {
+                let slug = store.resolve_slug(slug.as_deref())?;
+                store.remove_step(&slug, &step_id)?;
+                if as_json {
+                    print_json(&serde_json::json!({ "stepId": step_id, "removed": true }))?;
+                } else {
+                    println!("Removed step {step_id}");
+                }
+            }
+        },
+    }
+    Ok(())
+}
+
+/// Reads input from stdin when `spec` is `"-"`, otherwise returns an error
+/// (only stdin is supported; file paths are not).
+fn read_input(spec: &str) -> anyhow::Result<String> {
+    if spec == "-" {
+        let mut data = String::new();
+        io::stdin().read_to_string(&mut data)?;
+        Ok(data)
+    } else {
+        anyhow::bail!("only --from-json - (stdin) is supported; got {:?}", spec)
+    }
+}
+
 fn body_from_flag(body: String) -> anyhow::Result<String> {
     if body != "-" {
         return Ok(body);
@@ -937,6 +1233,64 @@ mod tests {
         assert!(got.is_char_boundary(got.len()));
         assert_eq!(got.matches('评').count(), 69);
         assert!(got.ends_with("..."));
+    }
+
+    #[test]
+    fn guide_steps_add_parses_files_title_content() {
+        let cli = Cli::try_parse_from([
+            "diffs",
+            "guide",
+            "steps",
+            "add",
+            "a.rs",
+            "b.rs",
+            "--title",
+            "Data model",
+            "--content",
+            "-",
+        ])
+        .expect("parse failed");
+        let Some(Command::Guide(GuideCommand {
+            json: false,
+            command: GuideSubcommand::Steps(GuideStepsCommand {
+                command:
+                    GuideStepsSubcommand::Add {
+                        ref files,
+                        ref title,
+                        ref content,
+                        slug: None,
+                    },
+            }),
+        })) = cli.command
+        else {
+            panic!("unexpected parse result: {:?}", cli.command.map(|_| "some"));
+        };
+        assert_eq!(files, &["a.rs", "b.rs"]);
+        assert_eq!(title, "Data model");
+        assert_eq!(content, "-");
+    }
+
+    #[test]
+    fn guide_list_parses_json_flag() {
+        let cli =
+            Cli::try_parse_from(["diffs", "guide", "--json", "list"]).expect("parse failed");
+        let Some(Command::Guide(GuideCommand { json: true, .. })) = cli.command else {
+            panic!("expected Guide with json=true");
+        };
+    }
+
+    #[test]
+    fn guide_create_parses_from_json_flag() {
+        let cli = Cli::try_parse_from(["diffs", "guide", "create", "--from-json", "-"])
+            .expect("parse failed");
+        let Some(Command::Guide(GuideCommand {
+            command: GuideSubcommand::Create { from_json: Some(ref spec), .. },
+            ..
+        })) = cli.command
+        else {
+            panic!("unexpected command");
+        };
+        assert_eq!(spec, "-");
     }
 
     #[test]

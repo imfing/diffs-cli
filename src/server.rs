@@ -1,7 +1,7 @@
 use crate::{
     comments::{self, AddReplyInput, AddThreadInput, CommentError, Store, Thread},
     config::{self, UiConfig},
-    gh, git,
+    gh, git, guides,
     webassets::Assets,
 };
 use axum::{
@@ -49,6 +49,7 @@ struct AppState {
     github_host: String,
     ui: UiConfig,
     comments: Option<Arc<Store>>,
+    guides: Option<Arc<guides::Store>>,
     events: broadcast::Sender<()>,
 }
 
@@ -117,6 +118,7 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
         cfg.github_host.trim().to_string()
     };
     let comments = Store::new(&cwd).ok().map(Arc::new);
+    let guides = guides::Store::new(&cwd).ok().map(Arc::new);
     let (events, _) = broadcast::channel(128);
     let watcher = if cfg.watch {
         Some(start_watcher(
@@ -132,6 +134,7 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
         github_host,
         ui: config::normalize_ui(cfg.ui),
         comments,
+        guides,
         events,
     };
     let router = Router::new()
@@ -162,6 +165,8 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
             get(handle_pull_request_info),
         )
         .route("/api/patch/{org}/{repo}/{number}", get(handle_patch))
+        .route("/api/guides", get(handle_list_guides))
+        .route("/api/guides/{slug}", get(handle_get_guide))
         .fallback(handle_static)
         .with_state(state);
     Ok(RunningServer {
@@ -494,6 +499,42 @@ async fn handle_patch(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct GuideListQuery {
+    all: Option<String>,
+}
+
+async fn handle_list_guides(
+    State(state): State<AppState>,
+    Query(query): Query<GuideListQuery>,
+) -> Response {
+    let Some(store) = state.guides else {
+        return guides_unavailable();
+    };
+    let result = if dirty_enabled(query.all.as_deref()) {
+        store.list_all()
+    } else {
+        store.list_for_branch()
+    };
+    match result {
+        Ok(summaries) => (StatusCode::OK, Json(json!({ "guides": summaries }))).into_response(),
+        Err(err) => guide_error(err),
+    }
+}
+
+async fn handle_get_guide(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    let Some(store) = state.guides else {
+        return guides_unavailable();
+    };
+    match store.get(&slug) {
+        Ok(file) => (StatusCode::OK, Json(file)).into_response(),
+        Err(err) => guide_error(err),
+    }
+}
+
 async fn handle_static(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -624,6 +665,24 @@ fn comments_unavailable() -> Response {
         StatusCode::SERVICE_UNAVAILABLE,
         "local comments require a git repository",
     )
+}
+
+fn guides_unavailable() -> Response {
+    error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "guides require a git repository",
+    )
+}
+
+fn guide_error(err: guides::GuideError) -> Response {
+    match err {
+        guides::GuideError::NotFound | guides::GuideError::StepNotFound => {
+            error(StatusCode::NOT_FOUND, err)
+        }
+        guides::GuideError::Validation(_) => error(StatusCode::BAD_REQUEST, err),
+        guides::GuideError::AlreadyExists(_) => error(StatusCode::CONFLICT, err),
+        _ => error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    }
 }
 
 fn pr_thread_response(result: anyhow::Result<Thread>) -> Response {
@@ -877,8 +936,9 @@ fn changed_files_from_events(events: &BTreeSet<String>) -> Vec<git::ChangedFile>
 const IGNORED_DIRS: [&str; 4] = ["node_modules", ".git", ".hg", ".svn"];
 
 /// Always-ignored paths, independent of gitignore: VCS internals and the comment
-/// store's atomic-write temp files (which live in a tracked `.diffs/` dir, so
-/// gitignore would not catch them, and watching them would cause reload loops).
+/// and guide store's atomic-write temp files (which live in a tracked `.diffs/`
+/// dir, so gitignore would not catch them, and watching them would cause reload
+/// loops).
 /// Matches on whole path components, so it is separator-agnostic on Windows.
 fn is_structurally_ignored(path: &FsPath) -> bool {
     path.components().any(|component| {
@@ -888,7 +948,9 @@ fn is_structurally_ignored(path: &FsPath) -> bool {
         let Some(name) = name.to_str() else {
             return false;
         };
-        IGNORED_DIRS.contains(&name) || (name.starts_with(".comments-") && name.ends_with(".json"))
+        IGNORED_DIRS.contains(&name)
+            || (name.starts_with(".comments-") && name.ends_with(".json"))
+            || (name.starts_with(".guides-") && name.ends_with(".json"))
     })
 }
 
@@ -1058,10 +1120,30 @@ mod tests {
         assert!(is_structurally_ignored(FsPath::new(
             "/repo/.diffs/.comments-ab12.json"
         )));
+        assert!(is_structurally_ignored(FsPath::new(
+            "/repo/.diffs/.guides-ab12.json"
+        )));
         assert!(!is_structurally_ignored(FsPath::new(
             "/repo/src/.gitignore"
         )));
         assert!(!is_structurally_ignored(FsPath::new("/repo/my.git/x")));
+    }
+
+    #[test]
+    fn guide_error_maps_status() {
+        use guides::GuideError;
+
+        let resp = guide_error(GuideError::NotFound);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let resp = guide_error(GuideError::StepNotFound);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let resp = guide_error(GuideError::Validation("bad input".into()));
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = guide_error(GuideError::AlreadyExists("s".into()));
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
     #[test]

@@ -160,6 +160,13 @@ export function fileBaseName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+// The leading directory component, e.g. "src/ui/" from "src/ui/Button.tsx".
+// Returns an empty string when the path has no directory part.
+export function fileDirName(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? "" : path.slice(0, slash + 1);
+}
+
 // The in-app diff route for a GitHub PR URL. A PR URL's pathname
 // (/org/repo/pull/123) matches the app's /:org/:repo/pull/:number route, so it
 // doubles as the internal navigation target. Returns undefined for non-URLs.
