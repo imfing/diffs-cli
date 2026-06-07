@@ -9,7 +9,7 @@ license = "Apache-2.0"
 anyhow = "1"
 axum = { version = "0.8", features = ["macros"] }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 hex = "0.4"

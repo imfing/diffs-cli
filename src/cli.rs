@@ -1,5 +1,6 @@
 use crate::{comments, config, gh, git, server};
 use anyhow::{Context, bail};
+use clap::builder::styling::AnsiColor;
 use clap::{Args, Parser, Subcommand};
 use std::{
     io::{self, IsTerminal, Read, Write},
@@ -12,6 +13,87 @@ use std::{
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 3433;
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// Palette for `--help`: green bold headers, cyan bold literals (matches uv/cargo
+/// and the green/cyan startup output).
+const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::styled()
+    .header(AnsiColor::Green.on_default().bold())
+    .usage(AnsiColor::Green.on_default().bold())
+    .literal(AnsiColor::Cyan.on_default().bold())
+    .placeholder(AnsiColor::Cyan.on_default());
+
+const ROOT_AFTER_HELP: &str = "\
+Run with no subcommand to review the current repository's working tree; the page
+live-reloads as files change. Use a subcommand for other workflows.
+
+Examples:
+  # Review the working tree of the current repository (live-reloads on change)
+  diffs
+
+  # Review another repository
+  diffs --dir /path/to/repo
+
+  # Use a custom port and don't open a browser window
+  diffs --port 4321 --no-open
+
+  # Review a GitHub pull request
+  diffs pr 123
+
+  # Compare the current branch against main
+  diffs branch main
+
+Use `diffs help <command>` for more details.
+";
+
+const PR_AFTER_HELP: &str = "\
+Requires the GitHub CLI (gh). The GitHub API caps PR diffs at 300 changed files;
+for larger PRs, run `gh pr checkout <n>` and then `diffs`.
+
+Examples:
+  # PR for the current branch
+  diffs pr
+
+  # PR number in the current repository
+  diffs pr 123
+
+  # PR in any repository
+  diffs pr org/repo/pull/123
+
+  # PR by URL, including GitHub Enterprise
+  diffs pr https://github.com/org/repo/pull/123
+  diffs pr --gh-host ghe.example.com org/repo/pull/123
+";
+
+const BRANCH_AFTER_HELP: &str = "\
+When no base is given, it is inferred from the PR base branch, the repository's
+default branch, or finally main/master.
+
+Examples:
+  # Infer the base automatically
+  diffs branch
+
+  # Compare against an explicit base
+  diffs branch main
+
+  # Include uncommitted changes
+  diffs branch --include-dirty
+";
+
+const COMMENTS_AFTER_HELP: &str = "\
+Experimental. Threads are stored in .diffs/comments.json in the target repo; keep
+.diffs/ git-ignored. Pass --json to any subcommand for machine-readable output.
+
+Examples:
+  # Add a comment on a specific line
+  diffs comments add --file web/src/App.tsx --line 42 --body \"Check this\"
+
+  # List comment threads for the current branch
+  diffs comments list
+
+  # Reply to, resolve, or reopen a thread by id
+  diffs comments reply <thread-id> --body \"Fixed\"
+  diffs comments resolve <thread-id>
+";
 
 /// Error that signals a non-zero exit without printing anything (help/diagnostics
 /// were already written).
@@ -28,22 +110,30 @@ impl std::error::Error for QuietExit {}
 
 #[derive(Parser)]
 #[command(name = "diffs")]
+#[command(version)]
+#[command(styles = HELP_STYLES)]
 #[command(about = "Review local diffs and GitHub pull requests in a browser")]
+#[command(after_help = ROOT_AFTER_HELP)]
 struct Cli {
-    #[arg(long, default_value = ".")]
-    dir: PathBuf,
     #[command(flatten)]
     serve: ServeFlags,
+    /// Path to the git repository to review
+    #[arg(long, default_value = ".", value_name = "PATH", help_heading = "Global options")]
+    dir: PathBuf,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Debug, Clone, Args)]
+#[command(next_help_heading = "Server options")]
 struct ServeFlags {
-    #[arg(long, default_value = DEFAULT_HOST)]
+    /// Network interface to bind the server to
+    #[arg(long, default_value = DEFAULT_HOST, value_name = "HOST")]
     host: String,
-    #[arg(long, default_value_t = DEFAULT_PORT)]
+    /// Port to listen on (falls back to a random free port when taken)
+    #[arg(long, default_value_t = DEFAULT_PORT, value_name = "PORT")]
     port: u16,
+    /// Start the server without opening a browser window
     #[arg(long)]
     no_open: bool,
 }
@@ -51,22 +141,31 @@ struct ServeFlags {
 #[derive(Subcommand)]
 enum Command {
     #[command(about = "Review a GitHub pull request")]
+    #[command(after_help = PR_AFTER_HELP)]
     Pr {
+        /// PR number, URL, or owner/repo/pull/<n> (defaults to the current branch's PR)
+        #[arg(value_name = "TARGET")]
         target: Option<String>,
-        #[arg(long)]
+        /// GitHub host to target, for GitHub Enterprise
+        #[arg(long, value_name = "HOST", env = "GH_HOST", hide_env_values = true)]
         gh_host: Option<String>,
         #[command(flatten)]
         serve: ServeFlags,
     },
     #[command(about = "Review commits on the current branch against a base")]
+    #[command(after_help = BRANCH_AFTER_HELP)]
     Branch {
+        /// Base ref to compare against (inferred from the PR or default branch when omitted)
+        #[arg(value_name = "BASE")]
         base: Option<String>,
+        /// Include staged, unstaged, and untracked changes
         #[arg(long)]
         include_dirty: bool,
         #[command(flatten)]
         serve: ServeFlags,
     },
     #[command(about = "Manage local review comments")]
+    #[command(after_help = COMMENTS_AFTER_HELP)]
     Comments(CommentsCommand),
     #[command(about = "Print version information")]
     Version,
@@ -74,7 +173,8 @@ enum Command {
 
 #[derive(Args)]
 struct CommentsCommand {
-    #[arg(long)]
+    /// Output results as JSON
+    #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
     command: CommentSubcommand,
@@ -86,33 +186,52 @@ enum CommentSubcommand {
     List,
     #[command(about = "Create a local comment thread")]
     Add {
-        #[arg(long = "file")]
+        /// File the comment refers to, relative to the repository root
+        #[arg(long = "file", value_name = "PATH")]
         path: String,
-        #[arg(long)]
+        /// Line number the comment refers to
+        #[arg(long, value_name = "N")]
         line: u32,
-        #[arg(long, default_value = comments::DEFAULT_SIDE)]
+        /// Side of the diff the line is on: additions or deletions
+        #[arg(long, default_value = comments::DEFAULT_SIDE, value_name = "SIDE")]
         side: String,
-        #[arg(long)]
+        /// End line for a multi-line comment range
+        #[arg(long, value_name = "N")]
         end_line: Option<u32>,
-        #[arg(long, default_value = "")]
+        /// Side of the diff for the range end (defaults to --side)
+        #[arg(long, default_value = "", value_name = "SIDE")]
         end_side: String,
-        #[arg(long)]
+        /// Comment body ("-" reads the body from stdin)
+        #[arg(long, value_name = "TEXT")]
         body: String,
-        #[arg(long, default_value = "")]
+        /// Author name to attribute the comment to
+        #[arg(long, default_value = "", value_name = "NAME")]
         author: String,
     },
     #[command(about = "Reply to a local comment thread")]
     Reply {
+        /// ID of the thread to reply to (from `comments list`)
+        #[arg(value_name = "THREAD_ID")]
         thread_id: String,
-        #[arg(long)]
+        /// Reply body ("-" reads the body from stdin)
+        #[arg(long, value_name = "TEXT")]
         body: String,
-        #[arg(long, default_value = "")]
+        /// Author name to attribute the reply to
+        #[arg(long, default_value = "", value_name = "NAME")]
         author: String,
     },
     #[command(about = "Resolve a local comment thread")]
-    Resolve { thread_id: String },
+    Resolve {
+        /// ID of the thread to resolve (from `comments list`)
+        #[arg(value_name = "THREAD_ID")]
+        thread_id: String,
+    },
     #[command(about = "Reopen a resolved local comment thread")]
-    Reopen { thread_id: String },
+    Reopen {
+        /// ID of the thread to reopen (from `comments list`)
+        #[arg(value_name = "THREAD_ID")]
+        thread_id: String,
+    },
 }
 
 pub async fn run(started: Instant) -> anyhow::Result<()> {
