@@ -138,6 +138,12 @@ export function fileBaseName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+// "src/ui/" from "src/ui/Button.tsx"; empty when there is no directory part.
+export function fileDirName(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? "" : path.slice(0, slash + 1);
+}
+
 // PR URL pathname matches the app's /:org/:repo/pull/:number route, so it doubles as the nav target.
 export function prDiffPathFromUrl(prUrl: string): string | undefined {
   try {
