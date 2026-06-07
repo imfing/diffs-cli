@@ -2,11 +2,13 @@ import { lazy, Suspense, type ReactNode, type SVGProps } from "react";
 import { Link } from "react-router";
 import {
   IconArrowLeft,
+  IconCheck,
   IconFileDiff,
   IconFileExport,
   IconGitBranch,
   IconGitPullRequest,
   IconLayoutSidebar,
+  IconRoute,
   IconSend,
   IconSwitchVertical,
   IconDots,
@@ -195,6 +197,9 @@ export function DiffToolbar({
   onSettingsOpenChange,
   onShortcutsOpen,
   onSidebarToggle,
+  guideAvailable,
+  guideMode,
+  onToggleGuide,
   onSubmitPendingComments,
   onToggleAllCollapsed,
   onExport,
@@ -240,6 +245,9 @@ export function DiffToolbar({
   onSettingsOpenChange: (open: boolean) => void;
   onShortcutsOpen: () => void;
   onSidebarToggle: () => void;
+  guideAvailable: boolean;
+  guideMode: boolean;
+  onToggleGuide: () => void;
   onSubmitPendingComments: () => void;
   onToggleAllCollapsed: () => void;
   onExport: () => void;
@@ -422,6 +430,13 @@ export function DiffToolbar({
             align="start"
             className="[&_[data-slot=dropdown-menu-item]]:text-[12px]"
           >
+            {guideAvailable && (
+              <DropdownMenuItem onClick={onToggleGuide}>
+                <IconRoute />
+                View as guide
+                {guideMode && <IconCheck className="ml-auto" />}
+              </DropdownMenuItem>
+            )}
             {branchDiffPath != null && (
               <DropdownMenuItem render={<Link to={branchDiffPath} />}>
                 <IconGitBranch />
