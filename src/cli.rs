@@ -1253,7 +1253,7 @@ mod tests {
 
     #[test]
     fn latest_comment_body_truncates_utf8_safely() {
-        let body = "评".repeat(80) + " done";
+        let body = "€".repeat(80) + " done";
         let thread = comments::Thread {
             id: "t".into(),
             provider: "local".into(),
@@ -1277,7 +1277,7 @@ mod tests {
         };
         let got = latest_comment_body(&thread);
         assert!(got.is_char_boundary(got.len()));
-        assert_eq!(got.matches('评').count(), 69);
+        assert_eq!(got.matches('€').count(), 69);
         assert!(got.ends_with("..."));
     }
 
