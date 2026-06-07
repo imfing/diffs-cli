@@ -9,6 +9,7 @@ import {
   IconGitBranch,
   IconGitPullRequest,
   IconLayoutSidebar,
+  IconRoute,
   IconSend,
   IconSwitchVertical,
   IconDots,
@@ -229,6 +230,9 @@ export function DiffToolbar({
   headRef = "",
   includeDirty = false,
   onSidebarToggle,
+  guideAvailable,
+  guideMode,
+  onToggleGuide,
   onSubmitPendingComments,
   onToggleAllCollapsed,
   onExport,
@@ -249,6 +253,9 @@ export function DiffToolbar({
   headRef?: string;
   includeDirty?: boolean;
   onSidebarToggle: () => void;
+  guideAvailable: boolean;
+  guideMode: boolean;
+  onToggleGuide: () => void;
   onSubmitPendingComments: () => void;
   onToggleAllCollapsed: () => void;
   onExport: () => void;
@@ -431,7 +438,14 @@ export function DiffToolbar({
             align="start"
             className="[&_[data-slot=dropdown-menu-item]]:text-[12px]"
           >
-            {links.map(([href, kind]) => {
+            {guideAvailable && (
+              <DropdownMenuItem onClick={onToggleGuide}>
+                <IconRoute />
+                View as guide
+                {guideMode && <IconCheck className="ml-auto" />}
+              </DropdownMenuItem>
+            )}
+                        {links.map(([href, kind]) => {
               if (!href) return null;
               const [Icon, label] = linkMeta[kind];
               const external = !href.startsWith("/");

@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useParams, useSearchParams, Link } from "react-router";
+import { useParams, useSearchParams, useLocation, Link } from "react-router";
 import {
   parsePatchFiles,
   type CodeViewItem,
@@ -63,6 +63,13 @@ import { DiffToolbar, type ToolbarLink } from "./diff-view/DiffToolbar";
 import { FileActionsMenu } from "./diff-view/FileActionsMenu";
 import { ShortcutsDialog } from "./diff-view/ShortcutsDialog";
 import { SidebarTree } from "./diff-view/SidebarTree";
+import { GuideStepPanel } from "./guide/GuideStepPanel";
+import {
+  orderFilesByGuide,
+  type Guide,
+  type GuideDisplayStep,
+  type GuideSummary,
+} from "./guide/guideModel";
 import type {
   AnnotationMeta,
   AppConfig,
@@ -103,8 +110,14 @@ const codeViewStyle = {
   "--diffs-font-size": DIFF_SURFACE_FONT_SIZE,
 } as CSSProperties;
 
+// Stable empty-steps reference so non-guide renders don't churn a new array.
+const EMPTY_STEPS: GuideDisplayStep[] = [];
+
 // Window after a programmatic scroll during which the cursor isn't re-synced.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
+// Guide step advances once the next step's first file crosses this fraction of
+// the viewport height (measured from the top), so the panel leads the cursor.
+const STEP_PROBE_FRACTION = 0.5;
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 
 type Viewer = CodeViewHandle<AnnotationMeta, undefined>;
@@ -301,11 +314,16 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     repo: string;
     number: string;
   }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
   // Explicit branch to review; empty means the checked-out branch.
   const headRef = source === "branch" ? (searchParams.get("head") ?? "") : "";
   const includeDirty = source === "branch" && searchParams.get("dirty") === "1";
+  const guideParam = searchParams.get("guide") ?? "";
+  // The /guide/:slug redirect hands the already-fetched guide down via router
+  // state; reuse it for the matching slug to skip an immediate refetch.
+  const navGuide = (location.state as { guide?: Guide } | null)?.guide ?? null;
 
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
@@ -352,6 +370,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const currentFileRef = useRef<string | null>(null);
   const programmaticScrollAtRef = useRef(0);
+  // Latest path→step map, read inside the scroll handler without re-subscribing.
+  const fileToStepRef = useRef<Map<string, number> | null>(null);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
@@ -376,6 +396,14 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     collapseRemovals,
     hideReviewed,
   } = settings;
+  // Guide mode: guides available for this diff's branch, the active guide's
+  // slug (null = off), its fetched detail, and the step currently in view.
+  const [availableGuides, setAvailableGuides] = useState<GuideSummary[]>([]);
+  const [activeGuideSlug, setActiveGuideSlug] = useState<string | null>(guideParam || null);
+  const [activeGuide, setActiveGuide] = useState<Guide | null>(
+    navGuide && navGuide.slug === guideParam ? navGuide : null,
+  );
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
   const isLocal = source === "local";
   const isBranch = source === "branch";
@@ -537,6 +565,47 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     loadComments();
   }, [loadComments]);
 
+  // Guides are scoped to the local repo's current branch; PR mode has none.
+  useEffect(() => {
+    if (!usesLocalStore) return;
+    let ignore = false;
+    apiFetch<{ guides?: GuideSummary[] }>("/api/guides")
+      .then((data) => {
+        if (!ignore) setAvailableGuides(data.guides ?? []);
+      })
+      .catch(() => {
+        if (!ignore) setAvailableGuides([]);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [usesLocalStore]);
+
+  // The active guide's full detail (steps + files). Reused when it's already in
+  // hand (seeded from the redirect's router state, or cached from a prior open);
+  // otherwise fetched when the slug changes. Either way the in-view step resets
+  // so a freshly opened guide starts at step 1.
+  useEffect(() => {
+    if (!activeGuideSlug) return;
+    // Already have this guide (seeded from the redirect's router state, or
+    // cached from a prior open) — skip the refetch; toggling on already reset
+    // the step.
+    if (activeGuide?.slug === activeGuideSlug) return;
+    let ignore = false;
+    apiFetch<Guide>(`/api/guides/${encodeURIComponent(activeGuideSlug)}`)
+      .then((guide) => {
+        if (ignore) return;
+        setActiveGuide(guide);
+        setCurrentStepIndex(0);
+      })
+      .catch(() => {
+        if (!ignore) setActiveGuide(null);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [activeGuideSlug, activeGuide]);
+
   const effectivePatchState: PatchLoadState = useMemo(
     () =>
       isBranch && baseRef === ""
@@ -556,9 +625,24 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     () => (patch ? parsePatchFiles(patch, patchCacheKeyPrefix(patch)).flatMap((p) => p.files) : []),
     [patch],
   );
-  const files = useMemo(
-    () => sortFiles(parsedFiles, orderBy, orderDir),
-    [parsedFiles, orderBy, orderDir],
+  // The fetched guide only counts once it matches the requested slug, so a stale
+  // guide never lingers across a switch or after the toggle is turned off.
+  const loadedGuide =
+    activeGuide != null && activeGuide.slug === activeGuideSlug ? activeGuide : null;
+  const guideMode = usesLocalStore && loadedGuide != null;
+  const guideOrdering = useMemo(
+    () => (guideMode && loadedGuide ? orderFilesByGuide(parsedFiles, loadedGuide.steps) : null),
+    [guideMode, loadedGuide, parsedFiles],
+  );
+  // Mirror the path→step map into a ref the scroll handler can read without
+  // re-subscribing.
+  useEffect(() => {
+    fileToStepRef.current = guideOrdering?.fileToStep ?? null;
+  }, [guideOrdering]);
+  // Guide mode imposes step order; otherwise the user's chosen sort applies.
+  const files = useMemo<FileDiffMetadata[]>(
+    () => (guideOrdering ? guideOrdering.files : sortFiles(parsedFiles, orderBy, orderDir)),
+    [guideOrdering, parsedFiles, orderBy, orderDir],
   );
   const fileSignatures = useMemo(() => {
     const map = new Map<string, string>();
@@ -612,7 +696,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   // hiddenReviewedKey remounts CodeView (no removeItem API); the scroll-restore effect below
   // restores position after the remount.
   const hiddenReviewedKey = [...hiddenReviewedNames].sort().join("\n");
-  const codeViewKey = `${effectivePatchState.patch ?? "empty"}:${orderBy}:${orderDir}:${hiddenReviewedKey}`;
+  const codeViewKey = `${effectivePatchState.patch ?? "empty"}:${orderBy}:${orderDir}:${hiddenReviewedKey}:${guideMode ? activeGuideSlug : ""}`;
   const pendingCommentThreads = useMemo(
     () => commentThreads.filter((thread) => thread.pending && thread.draft),
     [commentThreads],
@@ -671,19 +755,35 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const allCollapsed =
     allCollapsedOverride ??
     (initialItems.length > 0 && initialItems.every((item) => item.collapsed));
-  const getCurrentFile = useCallback((): string | null => {
+  // The last file whose header has scrolled to within `probePx` of the viewport
+  // top, via the data-diff-file markers from renderHeaderMetadata. The marker is
+  // slotted into the header's vertically centered metadata row, so its own top
+  // is ~half a header below where the header sticks; measuring the marker would
+  // lag detection by one file. Reach the actual sticky header — the marker's
+  // slot wrapper is assigned into the header's shadow DOM — so a header reads at
+  // its true position (top === areaTop the instant it sticks), with a fallback
+  // to the marker's own rect if the structure ever changes.
+  const fileAtViewportOffset = useCallback((probePx: number): string | null => {
     const area = codeViewAreaRef.current;
     if (!area) return null;
-    const headers = area.querySelectorAll<HTMLElement>("[data-diff-file]");
-    if (headers.length === 0) return null;
+    const markers = area.querySelectorAll<HTMLElement>("[data-diff-file]");
+    if (markers.length === 0) return null;
     const areaTop = area.getBoundingClientRect().top;
-    let current = headers[0].getAttribute("data-diff-file");
-    for (let i = 1; i < headers.length; i++) {
-      if (headers[i].getBoundingClientRect().top - areaTop > 8) break;
-      current = headers[i].getAttribute("data-diff-file");
+    const headerOffset = (marker: HTMLElement): number => {
+      const slot = marker.closest<HTMLElement>("[slot]")?.assignedSlot;
+      const header = slot?.closest<HTMLElement>("[data-diffs-header]") ?? marker;
+      return header.getBoundingClientRect().top - areaTop;
+    };
+    let current = markers[0].getAttribute("data-diff-file");
+    for (let i = 1; i < markers.length; i++) {
+      if (headerOffset(markers[i]) > probePx) break;
+      current = markers[i].getAttribute("data-diff-file");
     }
     return current;
   }, []);
+  // The file whose sticky header sits at the very top — the keyboard cursor for
+  // n/p/m navigation.
+  const getCurrentFile = useCallback(() => fileAtViewportOffset(8), [fileAtViewportOffset]);
   useEffect(() => {
     const area = codeViewAreaRef.current;
     if (!area) return;
@@ -698,7 +798,17 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       ) {
         rafId = requestAnimationFrame(() => {
           rafId = 0;
-          currentFileRef.current = getCurrentFile() ?? currentFileRef.current;
+          const cf = getCurrentFile() ?? currentFileRef.current;
+          currentFileRef.current = cf;
+          // In guide mode, advance the step as soon as the next step's first
+          // file crosses the viewport's vertical midpoint, rather than waiting
+          // for it to reach the top — the step changes ahead of the cursor.
+          const map = fileToStepRef.current;
+          if (map) {
+            const stepFile = fileAtViewportOffset(el.clientHeight * STEP_PROBE_FRACTION) ?? cf;
+            const step = stepFile != null ? map.get(stepFile) : undefined;
+            if (step != null) setCurrentStepIndex((prev) => (prev === step ? prev : step));
+          }
         });
       }
       if (timer) clearTimeout(timer);
@@ -726,7 +836,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       if (timer) clearTimeout(timer);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [scrollStorageKey, codeViewKey, getCurrentFile]);
+  }, [scrollStorageKey, codeViewKey, getCurrentFile, fileAtViewportOffset]);
   const scrollToFile = useCallback(
     (path: string, behavior: CodeViewScrollBehavior = "smooth-auto") => {
       const itemId = filePathToItemId.get(path);
@@ -742,6 +852,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       setMobileSidebarOpen(false);
     },
     [filePathToItemId],
+  );
+  // Selecting a step's file pill jumps straight to it. Set the owning step
+  // up front so the panel switches immediately, and scroll instantly: a
+  // smooth scroll outlasts the programmatic-settle window, letting a mid-flight
+  // scroll event resync the step to whatever file is still passing the top
+  // (the previous step's file), which would snap the panel back a step.
+  const selectGuideFile = useCallback(
+    (path: string) => {
+      const step = fileToStepRef.current?.get(path);
+      if (step != null) setCurrentStepIndex(step);
+      scrollToFile(path, "instant");
+    },
+    [scrollToFile],
   );
   const scrollToThread = useCallback(
     (thread: ReviewThread) => {
@@ -772,6 +895,25 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     }
     setSidebarOpen((open) => !open);
   }, []);
+  // Toggling guide mode (re)opens the latest guide or turns it off, mirroring the
+  // choice into the `guide` query param so the URL stays shareable. TODO: when a
+  // branch has several guides, let the user pick instead of defaulting to latest.
+  const toggleGuide = useCallback(() => {
+    const next = activeGuideSlug ? null : (availableGuides[0]?.slug ?? null);
+    setActiveGuideSlug(next);
+    // Opening a guide always starts at the first step, even when its detail is
+    // already cached (so the fetch's reset doesn't run).
+    if (next) setCurrentStepIndex(0);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next) params.set("guide", next);
+        else params.delete("guide");
+        return params;
+      },
+      { replace: true },
+    );
+  }, [activeGuideSlug, availableGuides, setSearchParams]);
   const toggleFileCollapsed = useCallback(
     (itemId: string) => {
       const viewer = viewerRef.current;
@@ -1455,6 +1597,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     colorScheme: resolvedAppColorScheme,
   };
 
+  // Guide-mode derived values for the sidebar and toolbar toggle.
+  const guideAvailable = usesLocalStore && (availableGuides.length > 0 || loadedGuide != null);
+  const displaySteps = guideOrdering?.displaySteps ?? EMPTY_STEPS;
+  const safeStepIndex =
+    displaySteps.length === 0 ? 0 : Math.min(currentStepIndex, displaySteps.length - 1);
+  const guidePanel = guideMode ? (
+    <GuideStepPanel steps={displaySteps} current={safeStepIndex} onSelectFile={selectGuideFile} />
+  ) : null;
+
   return (
     <div className="flex h-dvh flex-col text-xs">
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
@@ -1466,6 +1617,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         headRef={isBranch ? headRef : undefined}
         includeDirty={isBranch ? includeDirty : false}
         onSidebarToggle={openSidebar}
+        guideAvailable={guideAvailable}
+        guideMode={guideMode}
+        onToggleGuide={toggleGuide}
         onSubmitPendingComments={submitPendingComments}
         onToggleAllCollapsed={toggleAllFilesCollapsed}
         onExport={handleExport}
@@ -1492,7 +1646,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             className="relative hidden shrink-0 overflow-hidden border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 md:block"
             style={{ width: sidebarWidth }}
           >
-            <SidebarTree {...sidebarTreeProps} />
+            {guidePanel ?? <SidebarTree {...sidebarTreeProps} />}
             <div
               role="separator"
               aria-orientation="vertical"
@@ -1506,7 +1660,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         {mobileSidebarOpen && (
           <Suspense fallback={null}>
             <MobileSidebarDrawer open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-              <SidebarTree {...sidebarTreeProps} onClose={() => setMobileSidebarOpen(false)} />
+              {guidePanel ?? (
+                <SidebarTree {...sidebarTreeProps} onClose={() => setMobileSidebarOpen(false)} />
+              )}
             </MobileSidebarDrawer>
           </Suspense>
         )}
