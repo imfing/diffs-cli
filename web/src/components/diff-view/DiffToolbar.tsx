@@ -1,4 +1,4 @@
-import { lazy, Suspense, type SVGProps } from "react";
+import { lazy, Suspense, type ReactNode, type SVGProps } from "react";
 import { Link } from "react-router";
 import {
   IconArrowLeft,
@@ -53,6 +53,73 @@ function SimpleBrandIcon({ icon, ...props }: { icon: SimpleIcon } & SVGProps<SVG
 
 function GitHubIcon(props: SVGProps<SVGSVGElement>) {
   return <SimpleBrandIcon icon={siGithub} {...props} />;
+}
+
+// Small branch/ref pill shown in the toolbar (base ref, current branch).
+function BranchChip({ label, title }: { label: string; title: string }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+      title={title}
+    >
+      <IconGitBranch size={12} />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+// One tile in the pull-request stats grid (additions, deletions, files, commits).
+function PrStat({
+  value,
+  label,
+  valueClassName,
+}: {
+  value: string;
+  label: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="rounded-md bg-muted px-2 py-1.5">
+      <div className={`font-medium${valueClassName ? ` ${valueClassName}` : ""}`}>{value}</div>
+      <div className="text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+// Ghost icon button with a tooltip — the toolbar's standard action affordance.
+function ToolbarIconButton({
+  label,
+  tooltip,
+  onClick,
+  pressed,
+  children,
+}: {
+  label: string;
+  tooltip: string;
+  onClick: () => void;
+  pressed?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={headerIconButtonClass}
+            onClick={onClick}
+            aria-pressed={pressed}
+            aria-label={label}
+          >
+            {children}
+          </Button>
+        }
+      />
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function pullRequestTitle(prUrl: string) {
@@ -207,24 +274,14 @@ export function DiffToolbar({
 
   return (
     <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-900">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={headerIconButtonClass}
-              onClick={onSidebarToggle}
-              aria-pressed={sidebarOpen}
-              aria-label="Show file tree"
-            >
-              <IconLayoutSidebar size={14} />
-            </Button>
-          }
-        />
-        <TooltipContent>Show file tree</TooltipContent>
-      </Tooltip>
+      <ToolbarIconButton
+        label="Show file tree"
+        tooltip="Show file tree"
+        onClick={onSidebarToggle}
+        pressed={sidebarOpen}
+      >
+        <IconLayoutSidebar size={14} />
+      </ToolbarIconButton>
 
       <div className="mr-auto flex min-w-0 items-center gap-2">
         {isLocal ? (
@@ -237,13 +294,7 @@ export function DiffToolbar({
             </span>
             {baseRef && baseRef.trim() !== "" && (
               <>
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-                  title={`Base: ${baseRef.trim()}`}
-                >
-                  <IconGitBranch size={12} />
-                  <span className="truncate">{baseRef.trim()}</span>
-                </span>
+                <BranchChip label={baseRef.trim()} title={`Base: ${baseRef.trim()}`} />
                 <IconArrowLeft
                   size={12}
                   className="shrink-0 text-neutral-400 dark:text-neutral-500"
@@ -251,13 +302,10 @@ export function DiffToolbar({
               </>
             )}
             {config.gitBranch.trim() !== "" && (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+              <BranchChip
+                label={config.gitBranch.trim()}
                 title={`Branch: ${config.gitBranch.trim()}`}
-              >
-                <IconGitBranch size={12} />
-                <span className="truncate">{config.gitBranch.trim()}</span>
-              </span>
+              />
             )}
           </div>
         ) : (
@@ -325,30 +373,24 @@ export function DiffToolbar({
                         )}
                       </PopoverHeader>
                       <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                        <div className="rounded-md bg-muted px-2 py-1.5">
-                          <div className="font-medium text-green-600 dark:text-green-400">
-                            +{formatPullRequestCount(pullRequestInfo.additions)}
-                          </div>
-                          <div className="text-muted-foreground">Added</div>
-                        </div>
-                        <div className="rounded-md bg-muted px-2 py-1.5">
-                          <div className="font-medium text-red-600 dark:text-red-400">
-                            -{formatPullRequestCount(pullRequestInfo.deletions)}
-                          </div>
-                          <div className="text-muted-foreground">Deleted</div>
-                        </div>
-                        <div className="rounded-md bg-muted px-2 py-1.5">
-                          <div className="font-medium">
-                            {formatPullRequestCount(pullRequestInfo.changedFiles)}
-                          </div>
-                          <div className="text-muted-foreground">Files</div>
-                        </div>
-                        <div className="rounded-md bg-muted px-2 py-1.5">
-                          <div className="font-medium">
-                            {formatPullRequestCount(pullRequestInfo.commits)}
-                          </div>
-                          <div className="text-muted-foreground">Commits</div>
-                        </div>
+                        <PrStat
+                          value={`+${formatPullRequestCount(pullRequestInfo.additions)}`}
+                          label="Added"
+                          valueClassName="text-green-600 dark:text-green-400"
+                        />
+                        <PrStat
+                          value={`-${formatPullRequestCount(pullRequestInfo.deletions)}`}
+                          label="Deleted"
+                          valueClassName="text-red-600 dark:text-red-400"
+                        />
+                        <PrStat
+                          value={formatPullRequestCount(pullRequestInfo.changedFiles)}
+                          label="Files"
+                        />
+                        <PrStat
+                          value={formatPullRequestCount(pullRequestInfo.commits)}
+                          label="Commits"
+                        />
                       </div>
                     </>
                   ) : (
@@ -441,26 +483,14 @@ export function DiffToolbar({
           </Button>
         )}
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={headerIconButtonClass}
-                onClick={onToggleAllCollapsed}
-                aria-pressed={allCollapsed}
-                aria-label={allCollapsed ? "Expand all files" : "Collapse all files"}
-              >
-                <IconSwitchVertical />
-              </Button>
-            }
-          />
-          <TooltipContent>
-            {allCollapsed ? "Expand all files" : "Collapse all files"}
-          </TooltipContent>
-        </Tooltip>
+        <ToolbarIconButton
+          label={allCollapsed ? "Expand all files" : "Collapse all files"}
+          tooltip={allCollapsed ? "Expand all files" : "Collapse all files"}
+          onClick={onToggleAllCollapsed}
+          pressed={allCollapsed}
+        >
+          <IconSwitchVertical />
+        </ToolbarIconButton>
 
         <Suspense fallback={null}>
           <DiffSettingsPopover

@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/empty";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
+import { DiffStatusScreen } from "./diff-view/DiffStatusScreen";
 import { DiffToolbar } from "./diff-view/DiffToolbar";
 import { FileActionsMenu } from "./diff-view/FileActionsMenu";
 import { ShortcutsDialog } from "./diff-view/ShortcutsDialog";
@@ -82,6 +83,7 @@ import {
   threadEndLine,
   threadEndSide,
 } from "./diff-view/helpers";
+import { decodeStoredBool, usePersistentState } from "./diff-view/usePersistentState";
 import { apiFetch } from "@/lib/api";
 import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
 import { exportDiffToHtml } from "@/lib/exportHtml";
@@ -110,33 +112,6 @@ const STORAGE_HIDE_REVIEWED = "diffs-hide-reviewed";
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
 // Focusable elements whose own keys should take precedence over shortcuts.
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
-
-function readStoredBool(key: string): boolean | null {
-  const value = localStorage.getItem(key);
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return null;
-}
-
-function readStoredDiffStyle(): DiffStyle | null {
-  const value = localStorage.getItem(STORAGE_DIFF_STYLE);
-  return isDiffStyle(value) ? value : null;
-}
-
-function readStoredDiffTheme(): DiffThemeId | null {
-  const value = localStorage.getItem(STORAGE_DIFF_THEME);
-  return isDiffThemeId(value) ? value : null;
-}
-
-function readStoredOrderBy(): DiffOrderBy | null {
-  const value = localStorage.getItem(STORAGE_ORDER_BY);
-  return isDiffOrderBy(value) ? value : null;
-}
-
-function readStoredOrderDir(): DiffOrderDir | null {
-  const value = localStorage.getItem(STORAGE_ORDER_DIR);
-  return isDiffOrderDir(value) ? value : null;
-}
 
 function patchCacheKeyPrefix(patch: string): string {
   let h = 0x811c9dc5;
@@ -315,30 +290,52 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
   const includeDirty = source === "branch" && searchParams.get("dirty") === "1";
 
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => readStoredDiffStyle() ?? "split");
-  const [orderBy, setOrderBy] = useState<DiffOrderBy>(() => readStoredOrderBy() ?? "path");
-  const [orderDir, setOrderDir] = useState<DiffOrderDir>(() => readStoredOrderDir() ?? "asc");
-  const [diffThemeId, setDiffThemeId] = useState<DiffThemeId>(
-    () => readStoredDiffTheme() ?? "pierre",
+  const [diffStyle, setDiffStyle, setDiffStyleLocal] = usePersistentState<DiffStyle>(
+    STORAGE_DIFF_STYLE,
+    "split",
+    (r) => (isDiffStyle(r) ? r : null),
+  );
+  const [orderBy, setOrderBy] = usePersistentState<DiffOrderBy>(STORAGE_ORDER_BY, "path", (r) =>
+    isDiffOrderBy(r) ? r : null,
+  );
+  const [orderDir, setOrderDir] = usePersistentState<DiffOrderDir>(STORAGE_ORDER_DIR, "asc", (r) =>
+    isDiffOrderDir(r) ? r : null,
+  );
+  const [diffThemeId, setDiffThemeId, setDiffThemeLocal] = usePersistentState<DiffThemeId>(
+    STORAGE_DIFF_THEME,
+    "pierre",
+    (r) => (isDiffThemeId(r) ? r : null),
+  );
+  const [showBackground, setShowBackground, setShowBackgroundLocal] = usePersistentState(
+    STORAGE_LINE_BACKGROUNDS,
+    true,
+    decodeStoredBool,
+  );
+  const [showLineNumbers, setShowLineNumbers, setShowLineNumbersLocal] = usePersistentState(
+    STORAGE_LINE_NUMBERS,
+    true,
+    decodeStoredBool,
+  );
+  const [wordWrap, setWordWrap, setWordWrapLocal] = usePersistentState(
+    STORAGE_WORD_WRAP,
+    false,
+    decodeStoredBool,
+  );
+  const [collapseRemovals, setCollapseRemovals] = usePersistentState(
+    STORAGE_COLLAPSE_REMOVALS,
+    false,
+    decodeStoredBool,
+  );
+  const [hideReviewed, setHideReviewed] = usePersistentState(
+    STORAGE_HIDE_REVIEWED,
+    false,
+    decodeStoredBool,
   );
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
   const [allCollapsedOverride, setAllCollapsed] = useState<boolean | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [showBackground, setShowBackground] = useState(
-    () => readStoredBool(STORAGE_LINE_BACKGROUNDS) ?? true,
-  );
-  const [showLineNumbers, setShowLineNumbers] = useState(
-    () => readStoredBool(STORAGE_LINE_NUMBERS) ?? true,
-  );
-  const [wordWrap, setWordWrap] = useState(() => readStoredBool(STORAGE_WORD_WRAP) ?? false);
-  const [collapseRemovals, setCollapseRemovals] = useState(
-    () => readStoredBool(STORAGE_COLLAPSE_REMOVALS) ?? false,
-  );
-  const [hideReviewed, setHideReviewed] = useState(
-    () => readStoredBool(STORAGE_HIDE_REVIEWED) ?? false,
-  );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
@@ -411,36 +408,39 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         if (ignore) return;
         applyConfigFontFamilies(nextConfig);
         setConfig(nextConfig);
+        // Server config supplies defaults only for prefs the user hasn't set.
+        const unset = (key: string) => localStorage.getItem(key) == null;
         if (isAppColorScheme(nextConfig.colorScheme) && storedColorScheme() == null) {
           setAppColorScheme(nextConfig.colorScheme);
         }
-        if (isDiffThemeId(nextConfig.diffTheme) && readStoredDiffTheme() == null) {
-          setDiffThemeId(nextConfig.diffTheme);
+        if (isDiffThemeId(nextConfig.diffTheme) && unset(STORAGE_DIFF_THEME)) {
+          setDiffThemeLocal(nextConfig.diffTheme);
         }
-        if (isDiffStyle(nextConfig.diffStyle) && readStoredDiffStyle() == null) {
-          setDiffStyle(nextConfig.diffStyle);
+        if (isDiffStyle(nextConfig.diffStyle) && unset(STORAGE_DIFF_STYLE)) {
+          setDiffStyleLocal(nextConfig.diffStyle);
         }
-        if (typeof nextConfig.wordWrap === "boolean" && readStoredBool(STORAGE_WORD_WRAP) == null) {
-          setWordWrap(nextConfig.wordWrap);
+        if (typeof nextConfig.wordWrap === "boolean" && unset(STORAGE_WORD_WRAP)) {
+          setWordWrapLocal(nextConfig.wordWrap);
         }
-        if (
-          typeof nextConfig.lineNumbers === "boolean" &&
-          readStoredBool(STORAGE_LINE_NUMBERS) == null
-        ) {
-          setShowLineNumbers(nextConfig.lineNumbers);
+        if (typeof nextConfig.lineNumbers === "boolean" && unset(STORAGE_LINE_NUMBERS)) {
+          setShowLineNumbersLocal(nextConfig.lineNumbers);
         }
-        if (
-          typeof nextConfig.lineBackgrounds === "boolean" &&
-          readStoredBool(STORAGE_LINE_BACKGROUNDS) == null
-        ) {
-          setShowBackground(nextConfig.lineBackgrounds);
+        if (typeof nextConfig.lineBackgrounds === "boolean" && unset(STORAGE_LINE_BACKGROUNDS)) {
+          setShowBackgroundLocal(nextConfig.lineBackgrounds);
         }
       })
       .catch(() => {});
     return () => {
       ignore = true;
     };
-  }, []);
+    // Runs once on mount; the *Local setters are stable useState dispatchers.
+  }, [
+    setDiffStyleLocal,
+    setDiffThemeLocal,
+    setShowBackgroundLocal,
+    setShowLineNumbersLocal,
+    setWordWrapLocal,
+  ]);
 
   useEffect(() => {
     document.title = pageTitle;
@@ -928,44 +928,17 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     setAppColorScheme(value);
     persistColorScheme(value);
   }, []);
-  const handleDiffThemeChange = useCallback((id: DiffThemeId) => {
-    setDiffThemeId(id);
-    localStorage.setItem(STORAGE_DIFF_THEME, id);
-  }, []);
-  const handleDiffStyleToggle = useCallback(() => {
-    setDiffStyle((prev) => {
-      const next: DiffStyle = prev === "split" ? "unified" : "split";
-      localStorage.setItem(STORAGE_DIFF_STYLE, next);
-      return next;
-    });
-  }, []);
-  const handleOrderByChange = useCallback((value: DiffOrderBy) => {
-    setOrderBy(value);
-    localStorage.setItem(STORAGE_ORDER_BY, value);
-  }, []);
-  const handleOrderDirToggle = useCallback(() => {
-    setOrderDir((prev) => {
-      const next: DiffOrderDir = prev === "asc" ? "desc" : "asc";
-      localStorage.setItem(STORAGE_ORDER_DIR, next);
-      return next;
-    });
-  }, []);
-  const handleWordWrapChange = useCallback((value: boolean) => {
-    setWordWrap(value);
-    localStorage.setItem(STORAGE_WORD_WRAP, String(value));
-  }, []);
-  const handleShowLineNumbersChange = useCallback((value: boolean) => {
-    setShowLineNumbers(value);
-    localStorage.setItem(STORAGE_LINE_NUMBERS, String(value));
-  }, []);
-  const handleShowBackgroundChange = useCallback((value: boolean) => {
-    setShowBackground(value);
-    localStorage.setItem(STORAGE_LINE_BACKGROUNDS, String(value));
-  }, []);
+  const handleDiffStyleToggle = useCallback(
+    () => setDiffStyle(diffStyle === "split" ? "unified" : "split"),
+    [diffStyle, setDiffStyle],
+  );
+  const handleOrderDirToggle = useCallback(
+    () => setOrderDir(orderDir === "asc" ? "desc" : "asc"),
+    [orderDir, setOrderDir],
+  );
   const handleCollapseRemovalsChange = useCallback(
     (value: boolean) => {
       setCollapseRemovals(value);
-      localStorage.setItem(STORAGE_COLLAPSE_REMOVALS, String(value));
       const viewer = viewerRef.current;
       if (!viewer) return;
       // Apply immediately to every deleted file already in the view, but defer to
@@ -987,12 +960,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         }
       }
     },
-    [initialItems, collapsedStorageKey, reviewed, fileSignatures],
+    [initialItems, collapsedStorageKey, reviewed, fileSignatures, setCollapseRemovals],
   );
-  const handleHideReviewedChange = useCallback((value: boolean) => {
-    setHideReviewed(value);
-    localStorage.setItem(STORAGE_HIDE_REVIEWED, String(value));
-  }, []);
 
   const clearCommentTarget = useCallback(() => {
     setCommentTarget(null);
@@ -1309,22 +1278,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
   if (error) {
     return (
-      <div className="flex h-dvh flex-col">
-        <Empty className="flex-1">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <IconAlertCircle />
-            </EmptyMedia>
-            <EmptyTitle>Failed to load diff</EmptyTitle>
-            <EmptyDescription>{error}</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
-              Back
-            </Link>
-          </EmptyContent>
-        </Empty>
-      </div>
+      <DiffStatusScreen icon={<IconAlertCircle />} title="Failed to load diff" description={error}>
+        <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
+          Back
+        </Link>
+      </DiffStatusScreen>
     );
   }
 
@@ -1340,41 +1298,30 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         ? "The latest diffs are no longer available."
         : "This pull request doesn't change any files.";
     return (
-      <div className="flex h-dvh flex-col">
-        <Empty className="flex-1">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <IconFileX />
-            </EmptyMedia>
-            <EmptyTitle>{emptyTitle}</EmptyTitle>
-            <EmptyDescription>{emptyMessage}</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            {isLocal && repoContext?.branchBase ? (
-              <Link
-                to={`/branch?base=${encodeURIComponent(repoContext.branchBase)}`}
-                className={buttonVariants({ size: "sm" })}
-              >
-                View branch diff
-              </Link>
-            ) : !isLocal && !isBranch && prUrl !== "" ? (
-              <a
-                href={prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={buttonVariants({ size: "sm" })}
-              >
-                <IconExternalLink />
-                Open in browser
-              </a>
-            ) : (
-              <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                Back
-              </Link>
-            )}
-          </EmptyContent>
-        </Empty>
-      </div>
+      <DiffStatusScreen icon={<IconFileX />} title={emptyTitle} description={emptyMessage}>
+        {isLocal && repoContext?.branchBase ? (
+          <Link
+            to={`/branch?base=${encodeURIComponent(repoContext.branchBase)}`}
+            className={buttonVariants({ size: "sm" })}
+          >
+            View branch diff
+          </Link>
+        ) : !isLocal && !isBranch && prUrl !== "" ? (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={buttonVariants({ size: "sm" })}
+          >
+            <IconExternalLink />
+            Open in browser
+          </a>
+        ) : (
+          <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            Back
+          </Link>
+        )}
+      </DiffStatusScreen>
     );
   }
 
@@ -1424,9 +1371,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         onDiffStyleToggle={handleDiffStyleToggle}
         orderBy={orderBy}
         orderDir={orderDir}
-        onOrderByChange={handleOrderByChange}
+        onOrderByChange={setOrderBy}
         onOrderDirToggle={handleOrderDirToggle}
-        onDiffThemeChange={handleDiffThemeChange}
+        onDiffThemeChange={setDiffThemeId}
         onSettingsOpenChange={setSettingsOpen}
         onShortcutsOpen={() => setShortcutsOpen(true)}
         onSidebarToggle={openSidebar}
@@ -1447,11 +1394,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         hideReviewed={hideReviewed}
         prUrl={prUrl}
         selectedDiffThemeLabel={selectedDiffTheme.label}
-        setShowBackground={handleShowBackgroundChange}
-        setShowLineNumbers={handleShowLineNumbersChange}
-        setWordWrap={handleWordWrapChange}
+        setShowBackground={setShowBackground}
+        setShowLineNumbers={setShowLineNumbers}
+        setWordWrap={setWordWrap}
         setCollapseRemovals={handleCollapseRemovalsChange}
-        setHideReviewed={handleHideReviewedChange}
+        setHideReviewed={setHideReviewed}
         settingsOpen={settingsOpen}
         sidebarOpen={sidebarOpen}
         submittingPendingComments={submittingPendingComments}
@@ -1485,7 +1432,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               <EmptyContent>
                 <button
                   type="button"
-                  onClick={() => handleHideReviewedChange(false)}
+                  onClick={() => setHideReviewed(false)}
                   className={buttonVariants({ variant: "outline", size: "sm" })}
                 >
                   Show reviewed files

@@ -20,6 +20,7 @@ import {
   IconLayoutRows,
   IconSortAscending,
   IconSortDescending,
+  type TablerIcon,
 } from "@tabler/icons-react";
 import { isAppColorScheme, type AppColorScheme } from "@/lib/colorScheme";
 import type { DiffOrderBy, DiffOrderDir, DiffStyle, DiffThemeId } from "./types";
@@ -45,6 +46,82 @@ const diffStyleOptions = [
   { id: "split", label: "Split", icon: IconColumns2 },
   { id: "unified", label: "Unified", icon: IconLayoutRows },
 ] as const satisfies readonly { id: DiffStyle; label: string; icon: typeof IconColumns2 }[];
+
+type SelectRowOption = { id: string; label: string; icon?: TablerIcon };
+
+function SwitchRow({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  onCheckedChange: (value: boolean) => void;
+}) {
+  return (
+    <label className={settingsRowClass}>
+      <span className={settingsLabelClass}>{label}</span>
+      <Switch size="sm" checked={checked} onCheckedChange={onCheckedChange} />
+    </label>
+  );
+}
+
+// A label + dropdown row. Options may carry an icon (rendered in both the value
+// and the menu items); `fallbackLabel` covers the unreachable case of a value
+// not present in `options`.
+function SelectRow({
+  label,
+  value,
+  onValueChange,
+  options,
+  width,
+  fallbackLabel,
+  contentClassName,
+}: {
+  label: string;
+  value: string;
+  onValueChange: (value: string | null) => void;
+  options: readonly SelectRowOption[];
+  width: string;
+  fallbackLabel?: string;
+  contentClassName?: string;
+}) {
+  return (
+    <label className={settingsRowClass}>
+      <span className={settingsLabelClass}>{label}</span>
+      <Select value={value} onValueChange={onValueChange}>
+        <SelectTrigger size="sm" className={`${selectTriggerClass} ${width}`}>
+          <SelectValue>
+            {(current) => {
+              const option = options.find((opt) => opt.id === current);
+              if (!option) return fallbackLabel ?? options[0]?.label;
+              const Icon = option.icon;
+              return (
+                <span className="flex items-center gap-2">
+                  {Icon && <Icon size={13} />}
+                  {option.label}
+                </span>
+              );
+            }}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent align="end" className={contentClassName}>
+          <SelectGroup>
+            {options.map((option) => {
+              const Icon = option.icon;
+              return (
+                <SelectItem key={option.id} value={option.id} className={selectItemClass}>
+                  {Icon && <Icon size={13} />}
+                  {option.label}
+                </SelectItem>
+              );
+            })}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </label>
+  );
+}
 
 export function DiffSettingsPopover({
   open,
@@ -97,6 +174,13 @@ export function DiffSettingsPopover({
   setHideReviewed: (value: boolean) => void;
   onShortcutsOpen: () => void;
 }) {
+  const renderToggles = [
+    { label: "Line backgrounds", checked: showBackground, onChange: setShowBackground },
+    { label: "Line numbers", checked: showLineNumbers, onChange: setShowLineNumbers },
+    { label: "Word wrap", checked: wordWrap, onChange: setWordWrap },
+    { label: "Collapse removals", checked: collapseRemovals, onChange: setCollapseRemovals },
+  ];
+
   return (
     <Tooltip>
       <Popover open={open} onOpenChange={onOpenChange}>
@@ -148,26 +232,14 @@ export function DiffSettingsPopover({
             </ToggleGroup>
             <Separator className="my-1 opacity-60" />
             <div className={settingsGroupClass}>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Line backgrounds</span>
-                <Switch size="sm" checked={showBackground} onCheckedChange={setShowBackground} />
-              </label>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Line numbers</span>
-                <Switch size="sm" checked={showLineNumbers} onCheckedChange={setShowLineNumbers} />
-              </label>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Word wrap</span>
-                <Switch size="sm" checked={wordWrap} onCheckedChange={setWordWrap} />
-              </label>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Collapse removals</span>
-                <Switch
-                  size="sm"
-                  checked={collapseRemovals}
-                  onCheckedChange={setCollapseRemovals}
+              {renderToggles.map((toggle) => (
+                <SwitchRow
+                  key={toggle.label}
+                  label={toggle.label}
+                  checked={toggle.checked}
+                  onCheckedChange={toggle.onChange}
                 />
-              </label>
+              ))}
             </div>
             <Separator className="my-1 opacity-60" />
             <div className={settingsGroupClass}>
@@ -222,79 +294,34 @@ export function DiffSettingsPopover({
                   </Tooltip>
                 </div>
               </div>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Hide reviewed</span>
-                <Switch size="sm" checked={hideReviewed} onCheckedChange={setHideReviewed} />
-              </label>
+              <SwitchRow
+                label="Hide reviewed"
+                checked={hideReviewed}
+                onCheckedChange={setHideReviewed}
+              />
             </div>
             <Separator className="my-1 opacity-60" />
             <div className={settingsGroupClass}>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Color scheme</span>
-                <Select
-                  value={appColorScheme}
-                  onValueChange={(value) => {
-                    if (isAppColorScheme(value)) onColorSchemeChange(value);
-                  }}
-                >
-                  <SelectTrigger size="sm" className={`${selectTriggerClass} w-[140px]`}>
-                    <SelectValue>
-                      {(value) => {
-                        const option =
-                          colorSchemeOptions.find((opt) => opt.id === value) ??
-                          colorSchemeOptions[0];
-                        const Icon = option.icon;
-                        return (
-                          <span className="flex items-center gap-2">
-                            <Icon size={13} />
-                            {option.label}
-                          </span>
-                        );
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    <SelectGroup>
-                      {colorSchemeOptions.map((option) => {
-                        const Icon = option.icon;
-                        return (
-                          <SelectItem key={option.id} value={option.id} className={selectItemClass}>
-                            <Icon size={13} />
-                            {option.label}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className={settingsRowClass}>
-                <span className={settingsLabelClass}>Diff theme</span>
-                <Select
-                  value={diffThemeId}
-                  onValueChange={(value) => {
-                    if (isDiffThemeId(value)) onDiffThemeChange(value);
-                  }}
-                >
-                  <SelectTrigger size="sm" className={`${selectTriggerClass} w-[140px]`}>
-                    <SelectValue>
-                      {(value) =>
-                        diffThemeOptions.find((option) => option.id === value)?.label ??
-                        selectedDiffThemeLabel
-                      }
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="end" className="max-h-[260px]">
-                    <SelectGroup>
-                      {diffThemeOptions.map((option) => (
-                        <SelectItem key={option.id} value={option.id} className={selectItemClass}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </label>
+              <SelectRow
+                label="Color scheme"
+                value={appColorScheme}
+                onValueChange={(value) => {
+                  if (isAppColorScheme(value)) onColorSchemeChange(value);
+                }}
+                options={colorSchemeOptions}
+                width="w-[140px]"
+              />
+              <SelectRow
+                label="Diff theme"
+                value={diffThemeId}
+                onValueChange={(value) => {
+                  if (isDiffThemeId(value)) onDiffThemeChange(value);
+                }}
+                options={diffThemeOptions}
+                width="w-[140px]"
+                fallbackLabel={selectedDiffThemeLabel}
+                contentClassName="max-h-[260px]"
+              />
             </div>
             <Separator className="my-1 opacity-60" />
             <button
