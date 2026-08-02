@@ -194,6 +194,36 @@ pub fn branch_diff(cwd: impl AsRef<Path>, base: &str, include_dirty: bool) -> Re
     }
 }
 
+/// Forward-slash, repository-relative paths changed between the merge base of
+/// `base`..HEAD and the working tree. Always dirty-inclusive, so the set is a
+/// superset of both the committed-only and `dirty` views of the branch diff.
+/// Paths key on the new side of each delta (renames detected), matching
+/// `changed_files`.
+pub fn branch_changed_paths(cwd: impl AsRef<Path>, base: &str) -> Result<Vec<String>> {
+    let repo = discover(cwd)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let base_commit = repo.revparse_single(base)?.peel_to_commit()?;
+    let merge_base = repo.merge_base(base_commit.id(), head.id())?;
+    let tree = repo.find_commit(merge_base)?.tree()?;
+    let mut opts = diff_options();
+    let mut diff = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut opts))?;
+    let mut find = DiffFindOptions::new();
+    find.renames(true).copies(false);
+    let _ = diff.find_similar(Some(&mut find));
+    let mut paths = Vec::new();
+    for delta in diff.deltas() {
+        let path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .ok_or(GitError::InvalidPath)?;
+        paths.push(path.to_string_lossy().replace('\\', "/"));
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 fn diff_oid_to_tree(repo: &Repository, from: Oid, to: Oid) -> Result<String> {
     let from_tree = repo.find_commit(from)?.tree()?;
     let to_tree = repo.find_commit(to)?.tree()?;

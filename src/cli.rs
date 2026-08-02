@@ -109,8 +109,8 @@ Examples:
   # List all guides for the current branch
   diffs guide list
 
-  # Import a complete guide from a JSON file via stdin
-  diffs guide create --from-json - < guide-export.json
+  # Import a complete guide from a JSON file (or \"-\" for stdin)
+  diffs guide create --from-json guide-export.json
 ";
 
 /// Error that signals a non-zero exit without printing anything (help/diagnostics
@@ -982,15 +982,15 @@ fn run_guide(dir: &PathBuf, command: GuideCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Reads input from stdin when `spec` is `"-"`, otherwise returns an error
-/// (only stdin is supported; file paths are not).
+/// Reads input from stdin when `spec` is `"-"`, otherwise from the file at
+/// that path.
 fn read_input(spec: &str) -> anyhow::Result<String> {
     if spec == "-" {
         let mut data = String::new();
         io::stdin().read_to_string(&mut data)?;
         Ok(data)
     } else {
-        anyhow::bail!("only --from-json - (stdin) is supported; got {:?}", spec)
+        std::fs::read_to_string(spec).with_context(|| format!("read {spec}"))
     }
 }
 

@@ -385,13 +385,20 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     githubHost: "github.com",
   });
   // Guide mode: guides available for this diff's branch, the active guide's
-  // slug (null = off), its fetched detail, and the step currently in view.
+  // fetched detail, and the step currently in view. The active slug lives in
+  // the `guide` query param alone (null = off), so toggle, shared links, and
+  // browser history all stay in sync.
   const [availableGuides, setAvailableGuides] = useState<GuideSummary[]>([]);
-  const [activeGuideSlug, setActiveGuideSlug] = useState<string | null>(guideParam || null);
+  const activeGuideSlug = guideParam || null;
   const [activeGuide, setActiveGuide] = useState<Guide | null>(
     navGuide && navGuide.slug === guideParam ? navGuide : null,
   );
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  // A newly active guide always starts at step 1, however it became active
+  // (toggle, link, back/forward) and even when its detail is already cached.
+  useEffect(() => {
+    setCurrentStepIndex(0);
+  }, [activeGuideSlug]);
 
   const isLocal = source === "local";
   const isBranch = source === "branch";
@@ -579,22 +586,16 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     };
   }, [usesLocalStore]);
 
-  // The active guide's full detail (steps + files). Reused when it's already in
-  // hand (seeded from the redirect's router state, or cached from a prior open);
-  // otherwise fetched when the slug changes. Either way the in-view step resets
-  // so a freshly opened guide starts at step 1.
+  // The active guide's full detail (steps + files), fetched when the slug
+  // changes unless it's already in hand (seeded from the redirect's router
+  // state, or cached from a prior open).
   useEffect(() => {
     if (!activeGuideSlug) return;
-    // Already have this guide (seeded from the redirect's router state, or
-    // cached from a prior open) — skip the refetch; toggling on already reset
-    // the step.
     if (activeGuide?.slug === activeGuideSlug) return;
     let ignore = false;
     apiFetch<Guide>(`/api/guides/${encodeURIComponent(activeGuideSlug)}`)
       .then((guide) => {
-        if (ignore) return;
-        setActiveGuide(guide);
-        setCurrentStepIndex(0);
+        if (!ignore) setActiveGuide(guide);
       })
       .catch(() => {
         if (!ignore) setActiveGuide(null);
@@ -907,15 +908,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     }
     setSidebarOpen((open) => !open);
   }, []);
-  // Toggling guide mode (re)opens the latest guide or turns it off, mirroring the
-  // choice into the `guide` query param so the URL stays shareable. TODO: when a
-  // branch has several guides, let the user pick instead of defaulting to latest.
+  // Toggling guide mode (re)opens the latest guide or turns it off by writing
+  // the `guide` query param, the single source of truth for the active slug.
+  // TODO: when a branch has several guides, let the user pick instead of
+  // defaulting to latest.
   const toggleGuide = useCallback(() => {
     const next = activeGuideSlug ? null : (availableGuides[0]?.slug ?? null);
-    setActiveGuideSlug(next);
-    // Opening a guide always starts at the first step, even when its detail is
-    // already cached (so the fetch's reset doesn't run).
-    if (next) setCurrentStepIndex(0);
     setSearchParams(
       (prev) => {
         const params = new URLSearchParams(prev);
