@@ -43,7 +43,6 @@ pub type Result<T> = std::result::Result<T, GuideError>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
-    pub version: u32,
     pub slug: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -227,10 +226,11 @@ impl Store {
             return validation("title is required");
         }
         let now = Utc::now();
+        let base = input.base.trim().to_string();
         // Build steps, generating ids and validating files against the diff and
         // the one-file-one-step rule before anything touches disk.
         let mut steps: Vec<Step> = Vec::with_capacity(input.steps.len());
-        let changed = self.changed_paths()?;
+        let changed = self.changed_paths(&base)?;
         for raw in input.steps {
             let step_title = raw.title.trim().to_string();
             if step_title.is_empty() {
@@ -261,11 +261,10 @@ impl Store {
             input.branch.trim().to_string()
         };
         let file = File {
-            version: 1,
             slug,
             title,
             branch,
-            base: input.base.trim().to_string(),
+            base,
             created_at: now,
             updated_at: now,
             steps,
@@ -293,11 +292,11 @@ impl Store {
             return validation("step title is required");
         }
         let files = clean_files(input.files)?;
-        let changed = self.changed_paths()?;
-        validate_in_diff(&files, &changed)?;
 
         let _guard = self.lock.lock().expect("guide store lock poisoned");
         let mut file = self.load(&slug)?;
+        let changed = self.changed_paths(&file.base)?;
+        validate_in_diff(&files, &changed)?;
         ensure_disjoint(&file.steps, None, &files)?;
         file.steps.push(Step {
             id: new_id("stp"),
@@ -317,22 +316,21 @@ impl Store {
         if step_id.is_empty() {
             return validation("step id is required");
         }
-        // Validate replacement files (if any) against the diff up front.
         let cleaned_files = match input.files {
             Some(files) => Some(clean_files(files)?),
             None => None,
         };
-        if let Some(files) = &cleaned_files {
-            let changed = self.changed_paths()?;
-            validate_in_diff(files, &changed)?;
-        }
 
         let _guard = self.lock.lock().expect("guide store lock poisoned");
         let mut file = self.load(&slug)?;
         if !file.steps.iter().any(|step| step.id == step_id) {
             return Err(GuideError::StepNotFound);
         }
+        // Replacement files validate against the diff this guide narrates
+        // (which depends on its stored base, hence after the load).
         if let Some(files) = &cleaned_files {
+            let changed = self.changed_paths(&file.base)?;
+            validate_in_diff(files, &changed)?;
             ensure_disjoint(&file.steps, Some(step_id), files)?;
         }
         if let Some(title) = input.title {
@@ -408,13 +406,21 @@ impl Store {
         clean_slug(&derived)
     }
 
-    /// Forward-slash, repository-relative paths of the current working-tree diff;
-    /// the set guide files must belong to.
-    fn changed_paths(&self) -> Result<HashSet<String>> {
-        Ok(git::changed_files(&self.root)?
-            .into_iter()
-            .map(|file| file.path)
-            .collect())
+    /// Forward-slash, repository-relative paths of the diff this guide
+    /// narrates — the set guide files must belong to. A guide with a `base`
+    /// covers the branch diff against it (dirty included, so the set is a
+    /// superset of both views of that diff); otherwise the working-tree diff.
+    fn changed_paths(&self, base: &str) -> Result<HashSet<String>> {
+        if base.is_empty() {
+            Ok(git::changed_files(&self.root)?
+                .into_iter()
+                .map(|file| file.path)
+                .collect())
+        } else {
+            Ok(git::branch_changed_paths(&self.root, base)?
+                .into_iter()
+                .collect())
+        }
     }
 
     fn path(&self, slug: &str) -> PathBuf {
@@ -429,11 +435,7 @@ impl Store {
             }
             Err(err) => return Err(err.into()),
         };
-        let mut file: File = serde_json::from_str(&data)?;
-        if file.version == 0 {
-            file.version = 1;
-        }
-        Ok(file)
+        Ok(serde_json::from_str(&data)?)
     }
 
     fn save(&self, file: &File) -> Result<()> {
@@ -764,6 +766,63 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("not part of the current diff"), "{err}");
+    }
+
+    #[test]
+    fn base_guide_validates_against_branch_diff() {
+        let dir = new_repo();
+        let root = dir.path();
+        // Commit the working-tree changes on a feature branch: the working tree
+        // becomes clean, so the files only exist in the branch diff vs main.
+        run_git(root, &["checkout", "-b", "feature"]);
+        run_git(root, &["add", "."]);
+        run_git(root, &["commit", "-m", "feature work"]);
+
+        let store = Store::new(root).unwrap();
+        let guide = store
+            .create(CreateInput {
+                slug: "based".into(),
+                title: "Based".into(),
+                base: "main".into(),
+                steps: vec![StepInput {
+                    title: "first".into(),
+                    files: vec!["a.rs".into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(guide.steps.len(), 1);
+
+        let guide = store
+            .add_step(
+                "based",
+                AddStepInput {
+                    title: "second".into(),
+                    files: vec!["b.rs".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(guide.steps.len(), 2);
+
+        // A guide without a base still validates against the (now clean)
+        // working tree, so the same committed file is rejected there.
+        create_blank(&store, "local");
+        let err = store
+            .add_step(
+                "local",
+                AddStepInput {
+                    title: "second".into(),
+                    files: vec!["b.rs".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not part of the current diff"),
+            "{err}"
+        );
     }
 
     #[test]

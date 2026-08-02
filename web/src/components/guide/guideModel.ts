@@ -2,7 +2,6 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 
 // Full guide as returned by GET /api/guides/{slug}.
 export type Guide = {
-  version: number;
   slug: string;
   title: string;
   branch?: string;
@@ -56,8 +55,9 @@ const OTHER_TITLE = "Other changes";
 
 // Arranges the diff's files into the guide's steps. A file is claimed by the
 // first step that lists it; files no step claims fall into a trailing "Other
-// changes" step. Steps referencing files absent from the current diff simply
-// render with fewer (or no) files — stale references never break the layout.
+// changes" step. Steps referencing files absent from the current diff render
+// with fewer files; a step with no surviving files is dropped entirely — the
+// panel is scroll-driven, so a fileless step could never be reached anyway.
 export function orderFilesByGuide(
   files: readonly FileDiffMetadata[],
   steps: readonly GuideStep[],
@@ -70,15 +70,19 @@ export function orderFilesByGuide(
   const covered = new Set<string>();
   const displaySteps: GuideDisplayStep[] = [];
 
-  steps.forEach((step, idx) => {
+  for (const step of steps) {
     const stepFiles: FileDiffMetadata[] = [];
     for (const path of step.files) {
       const file = byName.get(path);
       if (file == null || covered.has(path)) continue;
       covered.add(path);
-      ordered.push(file);
-      fileToStep.set(path, idx);
       stepFiles.push(file);
+    }
+    if (stepFiles.length === 0) continue;
+    const idx = displaySteps.length;
+    for (const file of stepFiles) {
+      ordered.push(file);
+      fileToStep.set(file.name, idx);
     }
     displaySteps.push({
       id: step.id,
@@ -87,7 +91,7 @@ export function orderFilesByGuide(
       files: stepFiles,
       isOther: false,
     });
-  });
+  }
 
   const otherFiles: FileDiffMetadata[] = [];
   const otherIdx = displaySteps.length;
