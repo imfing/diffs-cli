@@ -28,15 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { AppColorScheme } from "@/lib/colorScheme";
-import type {
-  AppConfig,
-  DiffOrderBy,
-  DiffOrderDir,
-  DiffStyle,
-  DiffThemeId,
-  PullRequestInfo,
-} from "./types";
+import type { AppConfig, DiffSettingsProps, PullRequestInfo } from "./types";
 import { displayLocalPath, headerIconButtonClass } from "./helpers";
 
 const DiffSettingsPopover = lazy(() =>
@@ -55,7 +47,6 @@ function GitHubIcon(props: SVGProps<SVGSVGElement>) {
   return <SimpleBrandIcon icon={siGithub} {...props} />;
 }
 
-// Small branch/ref pill shown in the toolbar (base ref, current branch).
 function BranchChip({ label, title }: { label: string; title: string }) {
   return (
     <span
@@ -68,7 +59,6 @@ function BranchChip({ label, title }: { label: string; title: string }) {
   );
 }
 
-// One tile in the pull-request stats grid (additions, deletions, files, commits).
 function PrStat({
   value,
   label,
@@ -86,7 +76,6 @@ function PrStat({
   );
 }
 
-// Ghost icon button with a tooltip — the toolbar's standard action affordance.
 function ToolbarIconButton({
   label,
   tooltip,
@@ -129,16 +118,15 @@ function pullRequestTitle(prUrl: string) {
     if (owner && repo && kind === "pull" && number) {
       return { repo: `${owner}/${repo}`, pullRequest: `#${number}` };
     }
-  } catch {
-    // Fall through to the readable fallback below.
-  }
+  } catch {}
   return { repo: prUrl, pullRequest: "" };
 }
 
 function pullRequestBranchLabel(info: PullRequestInfo, side: "base" | "head") {
-  const label = side === "base" ? info.baseLabel : info.headLabel;
-  const ref = side === "base" ? info.baseRef : info.headRef;
-  const repo = side === "base" ? info.baseRepo : info.headRepo;
+  const { label, ref, repo } =
+    side === "base"
+      ? { label: info.baseLabel, ref: info.baseRef, repo: info.baseRepo }
+      : { label: info.headLabel, ref: info.headRef, repo: info.headRepo };
   if (label.trim() !== "") return label.trim();
   if (repo.trim() !== "" && ref.trim() !== "") return `${repo.trim()}:${ref.trim()}`;
   return ref.trim();
@@ -171,29 +159,14 @@ function formatPullRequestDate(value: string) {
   }).format(date);
 }
 
-function formatPullRequestCount(value: number) {
-  return new Intl.NumberFormat().format(value);
-}
+const pullRequestCountFormat = new Intl.NumberFormat();
 
 export function DiffToolbar({
   allCollapsed,
-  appColorScheme,
   config,
-  diffStyle,
-  diffThemeId,
-  showBackground,
-  showLineNumbers,
   isLocal,
   baseRef,
-  onColorSchemeChange,
-  onDiffStyleToggle,
-  orderBy,
-  orderDir,
-  onOrderByChange,
-  onOrderDirToggle,
-  onDiffThemeChange,
   onSettingsOpenChange,
-  onShortcutsOpen,
   onSidebarToggle,
   onSubmitPendingComments,
   onToggleAllCollapsed,
@@ -207,38 +180,17 @@ export function DiffToolbar({
   localDiffPath,
   pendingCommentCount,
   pullRequestInfo,
-  wordWrap,
-  collapseRemovals,
-  hideReviewed,
   prUrl,
-  selectedDiffThemeLabel,
-  setShowBackground,
-  setShowLineNumbers,
-  setWordWrap,
-  setCollapseRemovals,
-  setHideReviewed,
+  settings,
   settingsOpen,
   sidebarOpen,
   submittingPendingComments,
 }: {
   allCollapsed: boolean;
-  appColorScheme: AppColorScheme;
   config: AppConfig;
-  diffStyle: DiffStyle;
-  diffThemeId: DiffThemeId;
-  showBackground: boolean;
-  showLineNumbers: boolean;
   isLocal: boolean;
   baseRef?: string;
-  onColorSchemeChange: (value: AppColorScheme) => void;
-  onDiffStyleToggle: () => void;
-  orderBy: DiffOrderBy;
-  orderDir: DiffOrderDir;
-  onOrderByChange: (value: DiffOrderBy) => void;
-  onOrderDirToggle: () => void;
-  onDiffThemeChange: (value: DiffThemeId) => void;
   onSettingsOpenChange: (open: boolean) => void;
-  onShortcutsOpen: () => void;
   onSidebarToggle: () => void;
   onSubmitPendingComments: () => void;
   onToggleAllCollapsed: () => void;
@@ -252,16 +204,8 @@ export function DiffToolbar({
   localDiffPath?: string;
   pendingCommentCount: number;
   pullRequestInfo: PullRequestInfo | null;
-  wordWrap: boolean;
-  collapseRemovals: boolean;
-  hideReviewed: boolean;
   prUrl: string;
-  selectedDiffThemeLabel: string;
-  setShowBackground: (value: boolean) => void;
-  setShowLineNumbers: (value: boolean) => void;
-  setWordWrap: (value: boolean) => void;
-  setCollapseRemovals: (value: boolean) => void;
-  setHideReviewed: (value: boolean) => void;
+  settings: DiffSettingsProps;
   settingsOpen: boolean;
   sidebarOpen: boolean;
   submittingPendingComments: boolean;
@@ -374,21 +318,21 @@ export function DiffToolbar({
                       </PopoverHeader>
                       <div className="grid grid-cols-4 gap-2 text-center text-xs">
                         <PrStat
-                          value={`+${formatPullRequestCount(pullRequestInfo.additions)}`}
+                          value={`+${pullRequestCountFormat.format(pullRequestInfo.additions)}`}
                           label="Added"
                           valueClassName="text-green-600 dark:text-green-400"
                         />
                         <PrStat
-                          value={`-${formatPullRequestCount(pullRequestInfo.deletions)}`}
+                          value={`-${pullRequestCountFormat.format(pullRequestInfo.deletions)}`}
                           label="Deleted"
                           valueClassName="text-red-600 dark:text-red-400"
                         />
                         <PrStat
-                          value={formatPullRequestCount(pullRequestInfo.changedFiles)}
+                          value={pullRequestCountFormat.format(pullRequestInfo.changedFiles)}
                           label="Files"
                         />
                         <PrStat
-                          value={formatPullRequestCount(pullRequestInfo.commits)}
+                          value={pullRequestCountFormat.format(pullRequestInfo.commits)}
                           label="Commits"
                         />
                       </div>
@@ -494,30 +438,9 @@ export function DiffToolbar({
 
         <Suspense fallback={null}>
           <DiffSettingsPopover
+            {...settings}
             open={settingsOpen}
             onOpenChange={onSettingsOpenChange}
-            appColorScheme={appColorScheme}
-            onColorSchemeChange={onColorSchemeChange}
-            diffStyle={diffStyle}
-            onDiffStyleToggle={onDiffStyleToggle}
-            orderBy={orderBy}
-            orderDir={orderDir}
-            onOrderByChange={onOrderByChange}
-            onOrderDirToggle={onOrderDirToggle}
-            diffThemeId={diffThemeId}
-            onDiffThemeChange={onDiffThemeChange}
-            selectedDiffThemeLabel={selectedDiffThemeLabel}
-            showBackground={showBackground}
-            setShowBackground={setShowBackground}
-            showLineNumbers={showLineNumbers}
-            setShowLineNumbers={setShowLineNumbers}
-            wordWrap={wordWrap}
-            setWordWrap={setWordWrap}
-            collapseRemovals={collapseRemovals}
-            setCollapseRemovals={setCollapseRemovals}
-            hideReviewed={hideReviewed}
-            setHideReviewed={setHideReviewed}
-            onShortcutsOpen={onShortcutsOpen}
           />
         </Suspense>
       </div>

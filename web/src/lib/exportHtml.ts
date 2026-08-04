@@ -6,9 +6,8 @@ import interVariableUrl from "@fontsource-variable/inter/files/inter-latin-wght-
 import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
 import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
 
-// The subset of @pierre/diffs render options that affect how a file diff is
-// rasterized to static HTML. Mirrors the live CodeView `options` so the export
-// matches what the user currently sees (a superset object is accepted).
+// Subset of @pierre/diffs render options that affect static rasterization; mirrors the
+// live CodeView `options` (a superset object is accepted).
 export interface ExportDiffOptions {
   theme: DiffsThemeNames | ThemesType;
   themeType: ThemeTypes | undefined;
@@ -21,26 +20,16 @@ export interface ExportDiffOptions {
 export interface ExportDiffParams {
   files: readonly FileDiffMetadata[];
   options: ExportDiffOptions;
-  // Document <title> and the heading shown at the top of the exported page.
   title: string;
-  // Optional secondary line under the heading (e.g. repo path / branch).
   subtitle?: string;
-  // Locks the page shell (header/background) to dark or light so it matches the
-  // app at export time. The diff theme styles are baked in independently.
+  // Locks the page shell to dark/light; the diff theme is baked in independently.
   dark: boolean;
-  // Suggested download filename (without extension).
   fileName: string;
-  // User-configured font families (from AppConfig). When set, each is placed
-  // ahead of the embedded default stack, so the export honors the configured
-  // font on machines that have it installed and falls back to the embedded
-  // JetBrains Mono / Inter otherwise.
   codeFontFamily?: string;
   uiFontFamily?: string;
 }
 
-// Fonts are inlined as base64 so the exported file renders identically offline,
-// with no dependency on the dev server or any CDN. Fetched lazily on first
-// export and cached for the session.
+// Fonts are inlined as base64 so the export renders offline; fetched lazily and cached for the session.
 let fontFaceCssPromise: Promise<string> | null = null;
 
 function bufferToBase64(buffer: ArrayBuffer): string {
@@ -93,10 +82,8 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// Each preloaded fragment is `<svg sprite>` + one or more `<style>` blocks +
-// the diff header/content. The sprite and style blocks are identical across
-// files (same render options), so split them out and dedupe to avoid bloating
-// the document with one copy per file.
+// Preloaded fragments share identical sprite/style blocks across files; split and dedupe to
+// avoid bloating the document.
 interface SplitFragment {
   styles: string[];
   sprite: string | null;
@@ -122,11 +109,7 @@ function splitFragment(html: string): SplitFragment {
   return { styles, sprite, content: content.join("") };
 }
 
-// CSS for the page shell (header + layout) plus the design tokens the shell
-// relies on. The diff content brings its own inlined theme/highlight styles
-// (scoped to the shadow root via `:host`). The shell tokens are a minimal,
-// self-contained mirror of the app's neutral palette in web/src/index.css —
-// keep them roughly in sync if that palette changes.
+// Shell CSS + design tokens; mirrors web/src/index.css palette — keep roughly in sync if that changes.
 const SHELL_CSS = `
 :root{
   color-scheme:light;
@@ -178,13 +161,8 @@ body{
 }
 `.trim();
 
-// Font-family custom properties, resolved per export from the user's config to
-// mirror the live app's applyConfigFontFamilies: the configured family in front
-// of the embedded default. Kept separate from SHELL_CSS because they vary; the
-// values inherit across the shadow boundary so the diff content
-// (`--diffs-font-family`) picks them up. `--diffs-header-font-family` is left
-// unset on purpose — the live app doesn't set it either, so the diff file
-// headers keep the library's system-ui fallback in both views.
+// Mirrors applyConfigFontFamilies; values inherit across the shadow boundary. Note:
+// --diffs-header-font-family is left unset on purpose to match the live app's fallback.
 function fontVarsCss(codeFontFamily: string | undefined, uiFontFamily: string | undefined): string {
   const code =
     prependFontFamily(codeFontFamily, DEFAULT_CODE_FONT_FAMILY) ?? DEFAULT_CODE_FONT_FAMILY;
@@ -192,9 +170,8 @@ function fontVarsCss(codeFontFamily: string | undefined, uiFontFamily: string | 
   return `:root{--font-sans:${ui};}.diffs-root{--diffs-font-family:${code};--diffs-font-size:${DIFF_SURFACE_FONT_SIZE};}`;
 }
 
-// Style injected inside the shadow root to space out the per-file blocks. The
-// border reuses the shell's `--border` token, which inherits across the shadow
-// boundary alongside the library's `:host`-scoped styles.
+// Injected inside the shadow root; --border inherits across the shadow boundary
+// alongside the library's :host-scoped styles.
 const SHADOW_LAYOUT_CSS = `<style>
 .diffs-file{margin:0 0 16px;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
 .diffs-file:last-child{margin-bottom:0;}
@@ -202,9 +179,8 @@ const SHADOW_LAYOUT_CSS = `<style>
 
 async function buildDocument(params: ExportDiffParams): Promise<string> {
   const { files, options, title, subtitle, dark, codeFontFamily, uiFontFamily } = params;
-  // Explicit allowlist, not `{ ...options }`: `options` is the live
-  // `codeViewOptions`, which also carries interaction callbacks and a `layout`
-  // that would alter the static render if spread through to preloadFileDiff.
+  // Explicit allowlist, not `{ ...options }` — options is the live codeViewOptions and also
+  // carries callbacks/layout that would alter the static render if spread.
   const renderOptions = {
     theme: options.theme,
     themeType: options.themeType,
@@ -220,12 +196,8 @@ async function buildDocument(params: ExportDiffParams): Promise<string> {
     Promise.all(files.map((fileDiff) => preloadFileDiff({ fileDiff, options: renderOptions }))),
   ]);
 
-  // The diff styles are `:host`-scoped (the library renders inside a web
-  // component's shadow root), so the content must live in a real shadow root or
-  // `font-size`, `color-scheme`, and the hunk/highlight colors are dropped.
-  // A declarative shadow root reproduces that scope with no runtime JS, and a
-  // single shared root lets us dedupe the (identical) sprite and style blocks
-  // and keeps `<use href="#icon">` references resolvable.
+  // Diff styles are :host-scoped; content must live in a real shadow root or theme colors are
+  // dropped. A declarative shadow root does this with no runtime JS and enables dedup.
   const styleSet = new Set<string>();
   let sprite: string | null = null;
   const fileBlocks: string[] = [];
@@ -283,8 +255,6 @@ function triggerDownload(html: string, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-// Renders every file diff to a self-contained HTML document (fonts, highlight
-// theme, and layout all inlined) and triggers a browser download.
 export async function exportDiffToHtml(params: ExportDiffParams): Promise<void> {
   const html = await buildDocument(params);
   triggerDownload(html, params.fileName);
