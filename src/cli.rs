@@ -118,7 +118,12 @@ struct Cli {
     #[command(flatten)]
     serve: ServeFlags,
     /// Path to the git repository to review
-    #[arg(long, default_value = ".", value_name = "PATH", help_heading = "Global options")]
+    #[arg(
+        long,
+        default_value = ".",
+        value_name = "PATH",
+        help_heading = "Global options"
+    )]
     dir: PathBuf,
     #[command(subcommand)]
     command: Option<Command>,
