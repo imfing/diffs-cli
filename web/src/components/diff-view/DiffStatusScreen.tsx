@@ -8,9 +8,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 
-// Full-screen centered status (failed-to-load, no files, all-reviewed). The
-// icon/title/description/action shape is identical across them, so it lives here
-// instead of being copy-pasted per branch in DiffView.
 export function DiffStatusScreen({
   icon,
   title,

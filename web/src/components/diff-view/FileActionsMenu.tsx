@@ -15,13 +15,9 @@ const COPIED_RESET_MS = 1500;
 interface CopyAction {
   key: string;
   label: string;
-  // Returns the text to copy, or null when the action is unavailable.
   getText: () => string | null;
 }
 
-// Per-file overflow menu shown in the diff header metadata, mirroring the
-// toolbar's kebab. `diffText` is the file's raw patch section; absent when it
-// can't be resolved from the patch, in which case "Copy diff" is disabled.
 export function FileActionsMenu({
   path,
   diffText,
@@ -29,9 +25,6 @@ export function FileActionsMenu({
   path: string;
   diffText: string | undefined;
 }) {
-  // The label of the action copied most recently, swapped to "Copied" until the
-  // timer reverts it. Items stay open on click (closeOnClick={false}) so the
-  // confirmation is visible; closing the menu clears it.
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const resetTimer = useRef(0);
 
@@ -56,8 +49,7 @@ export function FileActionsMenu({
     { key: "name", label: "Copy filename", getText: () => fileBaseName(path) },
   ];
 
-  // The diff file header toggles collapse on click; stop propagation so opening
-  // the menu (and the portaled items) never folds the file.
+  // Stop propagation so opening the menu doesn't also collapse the file header.
   return (
     <span onClick={(e) => e.stopPropagation()}>
       <DropdownMenu onOpenChange={(open) => !open && setCopiedKey(null)}>

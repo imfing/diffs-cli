@@ -123,3 +123,28 @@ export type CodeViewLineSelection = {
   id: string;
   range: SelectedLineRange;
 };
+
+export type DiffSettingsProps = {
+  appColorScheme: AppColorScheme;
+  onColorSchemeChange: (value: AppColorScheme) => void;
+  diffStyle: DiffStyle;
+  onDiffStyleToggle: () => void;
+  orderBy: DiffOrderBy;
+  orderDir: DiffOrderDir;
+  onOrderByChange: (value: DiffOrderBy) => void;
+  onOrderDirToggle: () => void;
+  diffThemeId: DiffThemeId;
+  onDiffThemeChange: (value: DiffThemeId) => void;
+  selectedDiffThemeLabel: string;
+  showBackground: boolean;
+  setShowBackground: (value: boolean) => void;
+  showLineNumbers: boolean;
+  setShowLineNumbers: (value: boolean) => void;
+  wordWrap: boolean;
+  setWordWrap: (value: boolean) => void;
+  collapseRemovals: boolean;
+  setCollapseRemovals: (value: boolean) => void;
+  hideReviewed: boolean;
+  setHideReviewed: (value: boolean) => void;
+  onShortcutsOpen: () => void;
+};

@@ -1,4 +1,11 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
@@ -41,6 +48,18 @@ function gitStatusForFile(file: FileDiffMetadata): GitStatusEntry["status"] {
     default:
       return "modified";
   }
+}
+
+function SidebarIconButton({
+  tooltip,
+  ...buttonProps
+}: { tooltip: string } & ComponentProps<typeof Button>) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Button type="button" {...buttonProps} />} />
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 export function SidebarTree({
@@ -158,96 +177,68 @@ export function SidebarTree({
           role="group"
           aria-label="Sidebar sections"
         >
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={`size-7 ${section === "files" ? "text-foreground" : "text-muted-foreground"}`}
-                  aria-label="Files"
-                  aria-pressed={section === "files"}
-                  onClick={() => setSection("files")}
-                >
-                  <IconListTree size={16} />
-                  <span className="sr-only">Files</span>
-                </Button>
-              }
-            />
-            <TooltipContent>Files</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size={openComments.length > 0 ? "sm" : "icon-sm"}
-                  className={`${openComments.length > 0 ? "h-7 px-1.5" : "size-7"} ${section === "comments" ? "text-foreground" : "text-muted-foreground"}`}
-                  aria-label="Comments"
-                  aria-pressed={section === "comments"}
-                  onClick={() => setSection("comments")}
-                >
-                  <CommentsIcon size={16} />
-                  <span className="sr-only">Comments</span>
-                  {openComments.length > 0 && (
-                    <span
-                      aria-hidden="true"
-                      className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-200 px-1 text-[10px] leading-none font-medium tabular-nums text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
-                    >
-                      {openComments.length}
-                    </span>
-                  )}
-                </Button>
-              }
-            />
-            <TooltipContent>Comments</TooltipContent>
-          </Tooltip>
+          <SidebarIconButton
+            tooltip="Files"
+            variant="ghost"
+            size="icon-sm"
+            className={`size-7 ${section === "files" ? "text-foreground" : "text-muted-foreground"}`}
+            aria-label="Files"
+            aria-pressed={section === "files"}
+            onClick={() => setSection("files")}
+          >
+            <IconListTree size={16} />
+            <span className="sr-only">Files</span>
+          </SidebarIconButton>
+          <SidebarIconButton
+            tooltip="Comments"
+            variant="ghost"
+            size={openComments.length > 0 ? "sm" : "icon-sm"}
+            className={`${openComments.length > 0 ? "h-7 px-1.5" : "size-7"} ${section === "comments" ? "text-foreground" : "text-muted-foreground"}`}
+            aria-label="Comments"
+            aria-pressed={section === "comments"}
+            onClick={() => setSection("comments")}
+          >
+            <CommentsIcon size={16} />
+            <span className="sr-only">Comments</span>
+            {openComments.length > 0 && (
+              <span
+                aria-hidden="true"
+                className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-200 px-1 text-[10px] leading-none font-medium tabular-nums text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+              >
+                {openComments.length}
+              </span>
+            )}
+          </SidebarIconButton>
         </div>
         {section === "files" && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-7 text-muted-foreground"
-                  aria-label="Show file search"
-                  aria-pressed={search.isOpen}
-                  onPointerDown={(event) => {
-                    if (search.isOpen) {
-                      event.preventDefault();
-                    }
-                  }}
-                  onClick={() => (search.isOpen ? search.close() : search.open(""))}
-                >
-                  <IconSearch size={16} />
-                </Button>
+          <SidebarIconButton
+            tooltip="Show file search"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 text-muted-foreground"
+            aria-label="Show file search"
+            aria-pressed={search.isOpen}
+            onPointerDown={(event) => {
+              if (search.isOpen) {
+                event.preventDefault();
               }
-            />
-            <TooltipContent>Show file search</TooltipContent>
-          </Tooltip>
+            }}
+            onClick={() => (search.isOpen ? search.close() : search.open(""))}
+          >
+            <IconSearch size={16} />
+          </SidebarIconButton>
         )}
         {onClose && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-7 text-muted-foreground md:hidden"
-                  aria-label="Close file tree"
-                  onClick={onClose}
-                >
-                  <IconX size={16} />
-                </Button>
-              }
-            />
-            <TooltipContent>Close file tree</TooltipContent>
-          </Tooltip>
+          <SidebarIconButton
+            tooltip="Close file tree"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 text-muted-foreground md:hidden"
+            aria-label="Close file tree"
+            onClick={onClose}
+          >
+            <IconX size={16} />
+          </SidebarIconButton>
         )}
       </div>
 

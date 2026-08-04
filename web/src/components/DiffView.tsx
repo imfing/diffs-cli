@@ -60,6 +60,7 @@ import type {
   CommentTarget,
   DiffOrderBy,
   DiffOrderDir,
+  DiffSettingsProps,
   DiffStyle,
   DiffThemeId,
   PendingCommentDraft,
@@ -110,91 +111,84 @@ const STORAGE_HIDE_REVIEWED = "diffs-hide-reviewed";
 
 // Window after a programmatic scroll during which the cursor isn't re-synced.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
-// Focusable elements whose own keys should take precedence over shortcuts.
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 
-function patchCacheKeyPrefix(patch: string): string {
+// FNV-1a hash, folded to base36.
+function fnv1a(build: (feed: (s: string) => void) => void): string {
   let h = 0x811c9dc5;
-  for (let i = 0; i < patch.length; i++) {
-    h ^= patch.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
+  build((s) => {
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+  });
   return (h >>> 0).toString(36);
 }
 
-function readCollapsedPaths(key: string): Set<string> {
+function patchCacheKeyPrefix(patch: string): string {
+  return fnv1a((feed) => feed(patch));
+}
+
+function readSessionJson<T>(key: string, parse: (raw: unknown) => T, fallback: () => T): T {
   try {
     const raw = sessionStorage.getItem(key);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw));
+    return raw ? parse(JSON.parse(raw)) : fallback();
   } catch {
-    return new Set();
+    return fallback();
   }
+}
+
+function readCollapsedPaths(key: string): Set<string> {
+  return readSessionJson(
+    key,
+    (raw) => new Set(raw as string[]),
+    () => new Set(),
+  );
 }
 
 function persistCollapsedPaths(key: string, paths: Set<string>) {
   sessionStorage.setItem(key, JSON.stringify([...paths]));
 }
 
-// Reviewed state maps a file path to the signature of the diff that was
-// reviewed. A file counts as reviewed only while its current signature still
-// matches the stored one, so any change to the file's diff auto-clears it.
+// Reviewed state maps path -> diff signature; any change to the diff auto-clears it.
 function readReviewedSignatures(key: string): Map<string, string> {
-  try {
-    const raw = sessionStorage.getItem(key);
-    if (!raw) return new Map();
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return new Map(Object.entries(parsed as Record<string, string>));
-    }
-    return new Map();
-  } catch {
-    return new Map();
-  }
+  return readSessionJson(
+    key,
+    (raw) =>
+      raw && typeof raw === "object" && !Array.isArray(raw)
+        ? new Map(Object.entries(raw as Record<string, string>))
+        : new Map(),
+    () => new Map(),
+  );
 }
 
 function persistReviewedSignatures(key: string, signatures: Map<string, string>) {
   sessionStorage.setItem(key, JSON.stringify(Object.fromEntries(signatures)));
 }
 
-// Stable signature of a file's diff. Folds the git blob object IDs (parsed from
-// the patch `index` line) together with each hunk header; both change whenever
-// the file's content on either side of the diff changes.
 function fileDiffSignature(file: FileDiffMetadata): string {
-  let h = 0x811c9dc5;
-  const feed = (s: string) => {
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 0x01000193);
+  return fnv1a((feed) => {
+    feed(file.prevObjectId ?? "");
+    feed("..");
+    feed(file.newObjectId ?? "");
+    // Object IDs are zeroed for working-tree diffs, so also fold content lines (bounded by diff size).
+    for (const hunk of file.hunks) {
+      feed("\n@");
+      feed(hunk.hunkSpecs ?? "");
     }
-  };
-  feed(file.prevObjectId ?? "");
-  feed("..");
-  feed(file.newObjectId ?? "");
-  // Object IDs are absent/zeroed for working-tree diffs, so fold the actual
-  // content lines too. For patch-parsed diffs these hold only the changed
-  // lines, keeping this bounded to the size of the diff.
-  for (const hunk of file.hunks) {
-    feed("\n@");
-    feed(hunk.hunkSpecs ?? "");
-  }
-  for (const line of file.deletionLines) {
-    feed("\n-");
-    feed(line);
-  }
-  for (const line of file.additionLines) {
-    feed("\n+");
-    feed(line);
-  }
-  return (h >>> 0).toString(36);
+    for (const line of file.deletionLines) {
+      feed("\n-");
+      feed(line);
+    }
+    for (const line of file.additionLines) {
+      feed("\n+");
+      feed(line);
+    }
+  });
 }
 
-// Single source of truth for whether a file should render collapsed. A file
-// collapses if the user manually collapsed it, it is reviewed, or the
-// "collapse removals" setting applies to a deleted file. Every place that sets
-// `collapsed` imperatively routes through here so the three independent reasons
-// can't clobber one another (e.g. un-reviewing a deleted file must keep it
-// collapsed while "collapse removals" is on).
+// Single source of truth for collapse state; routes all three reasons (manual, reviewed,
+// collapse-removals) through here so they don't clobber each other.
 function computeCollapsed(
   file: FileDiffMetadata,
   manualCollapsed: Set<string>,
@@ -348,8 +342,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const repoContextRequested = useRef(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
-  // Keyboard cursor: the file at the top of the viewport. A ref so scrolling
-  // and rapid key presses don't churn React state.
   const currentFileRef = useRef<string | null>(null);
   const programmaticScrollAtRef = useRef(0);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
@@ -408,7 +400,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         if (ignore) return;
         applyConfigFontFamilies(nextConfig);
         setConfig(nextConfig);
-        // Server config supplies defaults only for prefs the user hasn't set.
         const unset = (key: string) => localStorage.getItem(key) == null;
         if (isAppColorScheme(nextConfig.colorScheme) && storedColorScheme() == null) {
           setAppColorScheme(nextConfig.colorScheme);
@@ -433,7 +424,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     return () => {
       ignore = true;
     };
-    // Runs once on mount; the *Local setters are stable useState dispatchers.
   }, [
     setDiffStyleLocal,
     setDiffThemeLocal,
@@ -566,14 +556,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     for (const f of files) if (!map.has(f.name)) map.set(f.name, fileDiffSignature(f));
     return map;
   }, [files]);
-  // Raw patch text per file, so the per-file menu can copy exactly what git
-  // emitted for that file without reconstructing it from the parsed metadata.
   const filePatchSections = useMemo(
     () => splitPatchByFile(effectivePatchState.patch),
     [effectivePatchState.patch],
   );
-  // Resolves GitHub/branch links once per local/branch session. PR mode derives
-  // its links from the route instead.
   const loadRepoContext = useCallback(() => {
     if (!usesLocalStore || repoContextRequested.current) return;
     repoContextRequested.current = true;
@@ -587,8 +573,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   useEffect(() => {
     if (shouldLoadRepoContext) loadRepoContext();
   }, [shouldLoadRepoContext, loadRepoContext]);
-  // Reviewed signatures, reloaded synchronously whenever the storage key
-  // changes (e.g. navigating between PRs) using the render-time reset pattern.
+  // Render-time reset pattern: resyncs synchronously when the storage key changes (e.g. switching PRs).
   const [reviewed, setReviewed] = useState<{ key: string; map: Map<string, string> }>(() => ({
     key: reviewedStorageKey,
     map: readReviewedSignatures(reviewedStorageKey),
@@ -596,8 +581,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   if (reviewed.key !== reviewedStorageKey) {
     setReviewed({ key: reviewedStorageKey, map: readReviewedSignatures(reviewedStorageKey) });
   }
-  // Files whose current signature still matches a reviewed signature; only
-  // populated while "Hide reviewed" is on so it stays empty (and cheap) otherwise.
   const hiddenReviewedNames = useMemo(() => {
     const names = new Set<string>();
     if (!hideReviewed) return names;
@@ -614,9 +597,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         : files.filter((f) => !hiddenReviewedNames.has(f.name)),
     [files, hiddenReviewedNames],
   );
-  // Folding the hidden set into the key remounts CodeView when files are hidden
-  // or revealed (it has no imperative removeItem); the scroll-restore effect
-  // keyed on codeViewKey puts the user back where they were.
+  // hiddenReviewedKey remounts CodeView (no removeItem API); the scroll-restore effect below
+  // restores position after the remount.
   const hiddenReviewedKey = [...hiddenReviewedNames].sort().join("\n");
   const codeViewKey = `${effectivePatchState.patch ?? "empty"}:${orderBy}:${orderDir}:${hiddenReviewedKey}`;
   const pendingCommentThreads = useMemo(
@@ -630,8 +612,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
     const collapsed = readCollapsedPaths(collapsedStorageKey);
     const reviewedSigs = readReviewedSignatures(reviewedStorageKey);
-    // Build ids from the full file index so they stay stable regardless of which
-    // files are hidden, then drop the hidden ones from the rendered list.
     return files
       .map((f, i) => ({
         id: `diff:${f.name}:${i}`,
@@ -656,10 +636,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     collapseRemovals,
     hiddenReviewedNames,
   ]);
-  // Maps each visible file to its CodeView item id. Ids keep the full-array
-  // index so they match `initialItems`, but hidden (reviewed) files are omitted
-  // so scroll/selection targets for them resolve to undefined and no-op instead
-  // of leaving a stale selection pointing at an unmounted item.
+  // Ids use the full-array index to match initialItems; hidden files are omitted so their
+  // targets resolve to undefined instead of a stale item.
   const filePathToItemId = useMemo(() => {
     const map = new Map<string, string>();
     for (let i = 0; i < files.length; i++) {
@@ -681,8 +659,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const allCollapsed =
     allCollapsedOverride ??
     (initialItems.length > 0 && initialItems.every((item) => item.collapsed));
-  // File whose sticky header sits at the top of the viewport, via the
-  // data-diff-file markers from renderHeaderMetadata.
   const getCurrentFile = useCallback((): string | null => {
     const area = codeViewAreaRef.current;
     if (!area) return null;
@@ -704,8 +680,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     let rafId = 0;
     const handleScroll = (e: Event) => {
       const el = e.target as HTMLElement;
-      // Sync the cursor to user scrolling, coalesced to one layout read per
-      // frame; skip while a programmatic scroll is still settling.
       if (
         rafId === 0 &&
         Date.now() - programmaticScrollAtRef.current > PROGRAMMATIC_SCROLL_SETTLE_MS
@@ -831,15 +805,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       if (sig == null) return;
       const map = reviewed.map;
       const nextReviewed = map.get(name) !== sig;
-      // Mutate the map in place so the header re-render triggered below (which
-      // still closes over the current `reviewed`) reads the updated value; the
-      // new wrapper object from setReviewed drives subsequent re-renders.
+      // Mutates the map in place so the updateItem() call below reads the new value;
+      // setReviewed's new wrapper drives future re-renders.
       if (nextReviewed) map.set(name, sig);
       else map.delete(name);
       persistReviewedSignatures(reviewedStorageKey, map);
       setReviewed({ key: reviewedStorageKey, map });
-      // Reviewing collapses the file; un-reviewing only expands it when no other
-      // reason (manual collapse, collapse-removals) still applies.
       viewer!.updateItem({
         ...item,
         version: (item.version ?? 0) + 1,
@@ -854,7 +825,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     },
     [fileSignatures, reviewed, reviewedStorageKey, collapsedStorageKey, collapseRemovals],
   );
-  // `n`/`p` step through visible files; `m` toggles reviewed on the cursor file.
   const navigateFile = useCallback(
     (delta: number) => {
       if (visibleFiles.length === 0) return;
@@ -891,7 +861,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     reviewed,
     visibleFiles,
   ]);
-  // useEffectEvent keeps the latest closure without re-subscribing the listener.
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
@@ -903,7 +872,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       setShortcutsOpen((open) => !open);
       return;
     }
-    // Don't navigate the diff behind an open comment input or help dialog.
     if (commentTarget || shortcutsOpen) return;
     switch (e.key) {
       case "n":
@@ -941,8 +909,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       setCollapseRemovals(value);
       const viewer = viewerRef.current;
       if (!viewer) return;
-      // Apply immediately to every deleted file already in the view, but defer to
-      // the other collapse reasons so a reviewed deleted file stays collapsed.
       const manualCollapsed = readCollapsedPaths(collapsedStorageKey);
       for (const item of initialItems) {
         if (item.type !== "diff" || item.fileDiff?.type !== "deleted") continue;
@@ -1132,8 +1098,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       overflow: (wordWrap ? "wrap" : "scroll") as "wrap" | "scroll",
       enableGutterUtility: true,
       enableLineSelection: true,
-      // Drop the gutter "+" button's negative margin so it stops overhanging
-      // the line start and blocking selection (shadow DOM, so needs unsafeCSS).
+      // Removes gutter "+" button's negative margin (overhangs line, blocks selection); shadow DOM needs unsafeCSS.
       unsafeCSS: "[data-utility-button] { margin-right: 0; }",
       onGutterUtilityClick: openCommentTarget,
       onLineSelectionEnd: openCommentTarget,
@@ -1325,10 +1290,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     );
   }
 
-  // Context-aware links for the toolbar menu, shown only when resolvable. In PR
-  // mode the repo URL comes straight from the route; otherwise from the lazily
-  // fetched repo context. "View PR diff" navigates in-app, the others open
-  // GitHub; both are omitted for the mode that's already showing that diff.
   const githubRepoUrl =
     !usesLocalStore && org && repo
       ? `https://${config.githubHost}/${org}/${repo}`
@@ -1340,8 +1301,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     isLocal && repoContext?.branchBase
       ? `/branch?base=${encodeURIComponent(repoContext.branchBase)}`
       : undefined;
-  // The counterpart to "View branch diff": branch mode offers a jump to the
-  // working-tree diff that `diffs` shows by default.
   const localDiffPath = isBranch ? "/local" : undefined;
 
   const sidebarTreeProps = {
@@ -1354,28 +1313,40 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     colorScheme: resolvedAppColorScheme,
   };
 
+  const settingsProps: DiffSettingsProps = {
+    appColorScheme,
+    onColorSchemeChange: handleColorSchemeChange,
+    diffStyle,
+    onDiffStyleToggle: handleDiffStyleToggle,
+    orderBy,
+    orderDir,
+    onOrderByChange: setOrderBy,
+    onOrderDirToggle: handleOrderDirToggle,
+    diffThemeId,
+    onDiffThemeChange: setDiffThemeId,
+    selectedDiffThemeLabel: selectedDiffTheme.label,
+    showBackground,
+    setShowBackground,
+    showLineNumbers,
+    setShowLineNumbers,
+    wordWrap,
+    setWordWrap,
+    collapseRemovals,
+    setCollapseRemovals: handleCollapseRemovalsChange,
+    hideReviewed,
+    setHideReviewed,
+    onShortcutsOpen: () => setShortcutsOpen(true),
+  };
+
   return (
     <div className="flex h-dvh flex-col text-xs">
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <DiffToolbar
         allCollapsed={allCollapsed}
-        appColorScheme={appColorScheme}
         config={config}
-        diffStyle={diffStyle}
-        diffThemeId={diffThemeId}
-        showBackground={showBackground}
-        showLineNumbers={showLineNumbers}
         isLocal={usesLocalStore}
         baseRef={isBranch ? baseRef : undefined}
-        onColorSchemeChange={handleColorSchemeChange}
-        onDiffStyleToggle={handleDiffStyleToggle}
-        orderBy={orderBy}
-        orderDir={orderDir}
-        onOrderByChange={setOrderBy}
-        onOrderDirToggle={handleOrderDirToggle}
-        onDiffThemeChange={setDiffThemeId}
         onSettingsOpenChange={setSettingsOpen}
-        onShortcutsOpen={() => setShortcutsOpen(true)}
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}
         onToggleAllCollapsed={toggleAllFilesCollapsed}
@@ -1389,16 +1360,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         localDiffPath={localDiffPath}
         pendingCommentCount={pendingCommentThreads.length}
         pullRequestInfo={currentPullRequestInfo}
-        wordWrap={wordWrap}
-        collapseRemovals={collapseRemovals}
-        hideReviewed={hideReviewed}
         prUrl={prUrl}
-        selectedDiffThemeLabel={selectedDiffTheme.label}
-        setShowBackground={setShowBackground}
-        setShowLineNumbers={setShowLineNumbers}
-        setWordWrap={setWordWrap}
-        setCollapseRemovals={handleCollapseRemovalsChange}
-        setHideReviewed={setHideReviewed}
+        settings={settingsProps}
         settingsOpen={settingsOpen}
         sidebarOpen={sidebarOpen}
         submittingPendingComments={submittingPendingComments}

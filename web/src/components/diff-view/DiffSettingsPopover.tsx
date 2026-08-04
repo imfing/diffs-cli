@@ -22,8 +22,9 @@ import {
   IconSortDescending,
   type TablerIcon,
 } from "@tabler/icons-react";
-import { isAppColorScheme, type AppColorScheme } from "@/lib/colorScheme";
-import type { DiffOrderBy, DiffOrderDir, DiffStyle, DiffThemeId } from "./types";
+import type { ReactNode } from "react";
+import { isAppColorScheme } from "@/lib/colorScheme";
+import type { DiffStyle, DiffSettingsProps } from "./types";
 import {
   colorSchemeOptions,
   diffOrderByOptions,
@@ -66,9 +67,6 @@ function SwitchRow({
   );
 }
 
-// A label + dropdown row. Options may carry an icon (rendered in both the value
-// and the menu items); `fallbackLabel` covers the unreachable case of a value
-// not present in `options`.
 function SelectRow({
   label,
   value,
@@ -77,6 +75,7 @@ function SelectRow({
   width,
   fallbackLabel,
   contentClassName,
+  trailing,
 }: {
   label: string;
   value: string;
@@ -85,40 +84,44 @@ function SelectRow({
   width: string;
   fallbackLabel?: string;
   contentClassName?: string;
+  trailing?: ReactNode;
 }) {
   return (
     <label className={settingsRowClass}>
       <span className={settingsLabelClass}>{label}</span>
-      <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger size="sm" className={`${selectTriggerClass} ${width}`}>
-          <SelectValue>
-            {(current) => {
-              const option = options.find((opt) => opt.id === current);
-              if (!option) return fallbackLabel ?? options[0]?.label;
-              const Icon = option.icon;
-              return (
-                <span className="flex items-center gap-2">
-                  {Icon && <Icon size={13} />}
-                  {option.label}
-                </span>
-              );
-            }}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent align="end" className={contentClassName}>
-          <SelectGroup>
-            {options.map((option) => {
-              const Icon = option.icon;
-              return (
-                <SelectItem key={option.id} value={option.id} className={selectItemClass}>
-                  {Icon && <Icon size={13} />}
-                  {option.label}
-                </SelectItem>
-              );
-            })}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+      <div className="flex items-center gap-1.5">
+        <Select value={value} onValueChange={onValueChange}>
+          <SelectTrigger size="sm" className={`${selectTriggerClass} ${width}`}>
+            <SelectValue>
+              {(current) => {
+                const option = options.find((opt) => opt.id === current);
+                if (!option) return fallbackLabel ?? options[0]?.label;
+                const Icon = option.icon;
+                return (
+                  <span className="flex items-center gap-2">
+                    {Icon && <Icon size={13} />}
+                    {option.label}
+                  </span>
+                );
+              }}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent align="end" className={contentClassName}>
+            <SelectGroup>
+              {options.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <SelectItem key={option.id} value={option.id} className={selectItemClass}>
+                    {Icon && <Icon size={13} />}
+                    {option.label}
+                  </SelectItem>
+                );
+              })}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        {trailing}
+      </div>
     </label>
   );
 }
@@ -148,31 +151,9 @@ export function DiffSettingsPopover({
   hideReviewed,
   setHideReviewed,
   onShortcutsOpen,
-}: {
+}: DiffSettingsProps & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  appColorScheme: AppColorScheme;
-  onColorSchemeChange: (value: AppColorScheme) => void;
-  diffStyle: DiffStyle;
-  onDiffStyleToggle: () => void;
-  orderBy: DiffOrderBy;
-  orderDir: DiffOrderDir;
-  onOrderByChange: (value: DiffOrderBy) => void;
-  onOrderDirToggle: () => void;
-  diffThemeId: DiffThemeId;
-  onDiffThemeChange: (value: DiffThemeId) => void;
-  selectedDiffThemeLabel: string;
-  showBackground: boolean;
-  setShowBackground: (value: boolean) => void;
-  showLineNumbers: boolean;
-  setShowLineNumbers: (value: boolean) => void;
-  wordWrap: boolean;
-  setWordWrap: (value: boolean) => void;
-  collapseRemovals: boolean;
-  setCollapseRemovals: (value: boolean) => void;
-  hideReviewed: boolean;
-  setHideReviewed: (value: boolean) => void;
-  onShortcutsOpen: () => void;
 }) {
   const renderToggles = [
     { label: "Line backgrounds", checked: showBackground, onChange: setShowBackground },
@@ -243,32 +224,15 @@ export function DiffSettingsPopover({
             </div>
             <Separator className="my-1 opacity-60" />
             <div className={settingsGroupClass}>
-              <div className={settingsRowClass}>
-                <span className={settingsLabelClass}>Order by</span>
-                <div className="flex items-center gap-1.5">
-                  <Select
-                    value={orderBy}
-                    onValueChange={(value) => {
-                      if (isDiffOrderBy(value)) onOrderByChange(value);
-                    }}
-                  >
-                    <SelectTrigger size="sm" className={`${selectTriggerClass} w-[112px]`}>
-                      <SelectValue>
-                        {(value) =>
-                          diffOrderByOptions.find((option) => option.id === value)?.label ?? "Path"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectGroup>
-                        {diffOrderByOptions.map((option) => (
-                          <SelectItem key={option.id} value={option.id} className={selectItemClass}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+              <SelectRow
+                label="Order by"
+                value={orderBy}
+                onValueChange={(value) => {
+                  if (isDiffOrderBy(value)) onOrderByChange(value);
+                }}
+                options={diffOrderByOptions}
+                width="w-[112px]"
+                trailing={
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -292,8 +256,8 @@ export function DiffSettingsPopover({
                       {orderDir === "asc" ? "Sort descending" : "Sort ascending"}
                     </TooltipContent>
                   </Tooltip>
-                </div>
-              </div>
+                }
+              />
               <SwitchRow
                 label="Hide reviewed"
                 checked={hideReviewed}
