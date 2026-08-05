@@ -312,22 +312,6 @@ async function loadWorktreeFileContents(path: string): Promise<FileContents> {
   return { name: path, contents };
 }
 
-function pullRequestHeaderState(info: PullRequestInfo): { label: string; className: string } {
-  if (info.merged) {
-    return { label: "Merged", className: "bg-purple-500/10 text-purple-600 dark:text-purple-400" };
-  }
-  if (info.state.toLowerCase() === "closed") {
-    return { label: "Closed", className: "bg-red-500/10 text-red-600 dark:text-red-400" };
-  }
-  if (info.draft) {
-    return {
-      label: "Draft",
-      className: "bg-neutral-500/10 text-neutral-600 dark:text-neutral-400",
-    };
-  }
-  return { label: "Open", className: "bg-green-500/10 text-green-600 dark:text-green-400" };
-}
-
 export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch" } = {}) {
   const { org, repo, number } = useParams<{
     org: string;
@@ -1324,61 +1308,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     [fileSignatures, reviewed, toggleReviewed, filePatchSections],
   );
 
-  const renderCodeViewHeader = useCallback(() => {
-    if (usesLocalStore || !currentPullRequestInfo) return null;
-    const info = currentPullRequestInfo;
-    const state = pullRequestHeaderState(info);
-    return (
-      <div className="mb-3 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs dark:border-neutral-700 dark:bg-neutral-900">
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate font-medium" title={info.title}>
-            {info.title}
-          </span>
-          <span
-            className={`shrink-0 rounded px-1.5 py-0.5 font-medium leading-none ${state.className}`}
-          >
-            {state.label}
-          </span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-neutral-500 dark:text-neutral-400">
-          {info.author !== "" && <span className="shrink-0">{info.author}</span>}
-          {info.baseRef !== "" && info.headRef !== "" && (
-            <span className="flex min-w-0 shrink items-center gap-1">
-              <span className="truncate">{info.baseRef}</span>
-              <span aria-hidden="true">←</span>
-              <span className="truncate">{info.headRef}</span>
-            </span>
-          )}
-          <span className="ml-auto flex shrink-0 items-center gap-2 tabular-nums">
-            <span>{info.changedFiles} files</span>
-            <span className="text-green-600 dark:text-green-400">+{info.additions}</span>
-            <span className="text-red-600 dark:text-red-400">−{info.deletions}</span>
-          </span>
-        </div>
-      </div>
-    );
-  }, [usesLocalStore, currentPullRequestInfo]);
-
-  const renderCodeViewFooter = useCallback(() => {
-    if (pendingCommentThreads.length === 0) return null;
-    const count = pendingCommentThreads.length;
-    return (
-      <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs dark:border-neutral-700 dark:bg-neutral-900">
-        <span className="text-neutral-500 dark:text-neutral-400">
-          {count} pending {count === 1 ? "comment" : "comments"}
-        </span>
-        <button
-          type="button"
-          className={buttonVariants({ size: "sm" })}
-          onClick={submitPendingComments}
-          disabled={submittingPendingComments}
-        >
-          {submittingPendingComments ? "Submitting..." : "Submit"}
-        </button>
-      </div>
-    );
-  }, [pendingCommentThreads, submitPendingComments, submittingPendingComments]);
-
   if (loading) {
     return (
       <div className="flex h-dvh items-center justify-center text-neutral-500">Loading diff...</div>
@@ -1558,8 +1487,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               renderAnnotation={renderAnnotation}
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
-              renderCodeViewHeader={renderCodeViewHeader}
-              renderCodeViewFooter={renderCodeViewFooter}
             />
           )}
         </div>
