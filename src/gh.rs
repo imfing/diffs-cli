@@ -270,6 +270,73 @@ async fn fetch_pull(
     )?)
 }
 
+/// Fetches a single file's raw content from a pull request's old or new side.
+/// `side` is `"old"` (base repo at `base.sha`) or anything else, treated as
+/// `"new"` (head repo at `head.sha`, fork-aware, falling back to
+/// `{org}/{repo}` when GitHub omits `head.repo`, e.g. a deleted fork).
+pub async fn pull_request_file(
+    github_host: &str,
+    org: &str,
+    repo: &str,
+    number: &str,
+    path: &str,
+    side: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let pull = fetch_pull(github_host, org, repo, number).await?;
+    let (owner, name, sha) = if side == "old" {
+        let full_name = pull.base.repo.map(|r| r.full_name);
+        let (owner, name) = split_full_name(full_name.as_deref(), org, repo);
+        (owner, name, pull.base.sha)
+    } else {
+        let full_name = pull.head.repo.map(|r| r.full_name);
+        let (owner, name) = split_full_name(full_name.as_deref(), org, repo);
+        (owner, name, pull.head.sha)
+    };
+    if sha.is_empty() {
+        bail!("pull request {side} sha is missing");
+    }
+    let args = vec![
+        "api".to_string(),
+        format!(
+            "repos/{owner}/{name}/contents/{}?ref={sha}",
+            encode_path_segments(path)
+        ),
+        "--hostname".to_string(),
+        github_host.to_string(),
+        "-H".to_string(),
+        "Accept: application/vnd.github.raw+json".to_string(),
+    ];
+    run_bytes("gh api pull request file", &args, GH_PATCH_TIMEOUT).await
+}
+
+/// Splits a GitHub `owner/name` full name into its parts, falling back to
+/// `(org, repo)` when absent or malformed (e.g. `head.repo` is `null` for a
+/// PR whose fork was deleted).
+fn split_full_name(full_name: Option<&str>, org: &str, repo: &str) -> (String, String) {
+    full_name
+        .and_then(|full| full.split_once('/'))
+        .filter(|(owner, name)| !owner.is_empty() && !name.is_empty())
+        .map(|(owner, name)| (owner.to_string(), name.to_string()))
+        .unwrap_or_else(|| (org.to_string(), repo.to_string()))
+}
+
+/// Percent-encodes each `/`-separated segment of `path` for use in a `gh api`
+/// REST path (so a segment containing e.g. a space or `#` round-trips, and a
+/// literal `/` within a segment can't be smuggled in to escape it).
+fn encode_path_segments(path: &str) -> String {
+    let mut base = Url::parse("https://example.invalid").expect("static URL parses");
+    {
+        let mut segments = base
+            .path_segments_mut()
+            .expect("base URL is not cannot-be-a-base");
+        segments.clear();
+        for segment in path.split('/') {
+            segments.push(segment);
+        }
+    }
+    base.path().trim_start_matches('/').to_string()
+}
+
 async fn pull_request_head_sha(
     github_host: &str,
     org: &str,
@@ -949,5 +1016,37 @@ mod tests {
     #[test]
     fn convert_github_thread_skips_empty() {
         assert!(convert_github_thread(ReviewThread::default()).is_none());
+    }
+
+    #[test]
+    fn split_full_name_prefers_repo_full_name_falls_back_to_org_repo() {
+        assert_eq!(
+            split_full_name(Some("forker/repo"), "org", "repo"),
+            ("forker".to_string(), "repo".to_string())
+        );
+        // Missing (deleted fork) falls back to the PR path's org/repo.
+        assert_eq!(
+            split_full_name(None, "org", "repo"),
+            ("org".to_string(), "repo".to_string())
+        );
+        // Malformed falls back too.
+        for bad in ["noslash", "/repo", "owner/"] {
+            assert_eq!(
+                split_full_name(Some(bad), "org", "repo"),
+                ("org".to_string(), "repo".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn encode_path_segments_percent_encodes_each_segment() {
+        assert_eq!(encode_path_segments("src/main.rs"), "src/main.rs");
+        assert_eq!(
+            encode_path_segments("a dir/file name.txt"),
+            "a%20dir/file%20name.txt"
+        );
+        // A literal `/` inside a single logical segment cannot smuggle in an
+        // extra path component.
+        assert_eq!(encode_path_segments("weird#name"), "weird%23name");
     }
 }

@@ -17,6 +17,14 @@ pub enum GitError {
     NoWorkdir,
     #[error("invalid utf-8 path in repository")]
     InvalidPath,
+    #[error("invalid object id")]
+    InvalidOid,
+    #[error("invalid repository-relative path")]
+    InvalidRepoPath,
+    #[error("blob not found")]
+    BlobNotFound,
+    #[error("file not found")]
+    FileNotFound,
 }
 
 pub type Result<T> = std::result::Result<T, GitError>;
@@ -354,6 +362,65 @@ fn strip_git_path_prefix(path: &str, workdir: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Whether `value` is a well-formed (possibly abbreviated) blob object id: 4-64
+/// lowercase hex characters. Checked before it ever reaches git2, so a
+/// malformed id is a 400 rather than whatever git2 makes of it.
+pub fn is_hex_oid(value: &str) -> bool {
+    (4..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Reads a blob's raw content by (possibly abbreviated) hex object id.
+/// Non-blob objects (trees, commits, tags that don't peel to a blob) and
+/// unresolvable ids are reported as `BlobNotFound`.
+pub fn read_blob(cwd: impl AsRef<Path>, oid: &str) -> Result<Vec<u8>> {
+    if !is_hex_oid(oid) {
+        return Err(GitError::InvalidOid);
+    }
+    let repo = discover(cwd)?;
+    let object = repo
+        .revparse_single(oid)
+        .map_err(|_| GitError::BlobNotFound)?;
+    let blob = object.peel_to_blob().map_err(|_| GitError::BlobNotFound)?;
+    Ok(blob.content().to_vec())
+}
+
+/// Whether `path` is a safe repository-relative path for a worktree file
+/// read: non-empty, relative (no leading `/`), no backslashes, and no empty,
+/// `.`, or `..` segments. Does not check the filesystem; callers must still
+/// canonicalize and confirm the result stays under the repository root.
+pub fn is_safe_repo_path(path: &str) -> bool {
+    if path.is_empty() || path.starts_with('/') || path.contains('\\') {
+        return false;
+    }
+    path.split('/')
+        .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+/// Reads a repository-relative working-tree file's raw content. Rejects
+/// unsafe paths (see `is_safe_repo_path`) and any path that, once
+/// canonicalized, escapes the repository root (e.g. via a symlink).
+pub fn read_worktree_file(cwd: impl AsRef<Path>, rel_path: &str) -> Result<Vec<u8>> {
+    if !is_safe_repo_path(rel_path) {
+        return Err(GitError::InvalidRepoPath);
+    }
+    let root = root(cwd)?;
+    let canonical_root = root.canonicalize().map_err(|_| GitError::NoWorkdir)?;
+    let candidate = root.join(rel_path);
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|_| GitError::FileNotFound)?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(GitError::InvalidRepoPath);
+    }
+    if !canonical.is_file() {
+        return Err(GitError::FileNotFound);
+    }
+    std::fs::read(&canonical).map_err(|_| GitError::FileNotFound)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +515,138 @@ mod tests {
         assert!(!is_path_ignored(&repo, root.join("src/main.rs")));
         // Paths outside the working tree must not be treated as ignored.
         assert!(!is_path_ignored(&repo, "/etc/hosts"));
+    }
+
+    #[test]
+    fn is_hex_oid_validates_length_and_charset() {
+        for ok in ["abcd", "0123456789abcdef", &"f".repeat(64)] {
+            assert!(is_hex_oid(ok), "{ok} should be a valid oid");
+        }
+        for bad in ["", "abc", &"a".repeat(65), "ABCD", "abcz", "abc def"] {
+            assert!(!is_hex_oid(bad), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn read_blob_resolves_content_and_rejects_bad_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "user.email", "diffs@example.com"]);
+        git(root, &["config", "user.name", "Diffs Test"]);
+        fs::write(root.join("file.txt"), "hello blob\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-m", "initial"]);
+
+        let repo = discover(root).unwrap();
+        let blob_oid = repo
+            .head()
+            .unwrap()
+            .peel_to_tree()
+            .unwrap()
+            .get_path(Path::new("file.txt"))
+            .unwrap()
+            .id()
+            .to_string();
+        let tree_oid = repo
+            .head()
+            .unwrap()
+            .peel_to_tree()
+            .unwrap()
+            .id()
+            .to_string();
+
+        // Full and abbreviated oids resolve to the blob's content.
+        let content = read_blob(root, &blob_oid).unwrap();
+        assert_eq!(content, b"hello blob\n");
+        let content = read_blob(root, &blob_oid[..8]).unwrap();
+        assert_eq!(content, b"hello blob\n");
+
+        // Malformed oid strings are rejected before touching git2.
+        assert!(matches!(
+            read_blob(root, "not-hex"),
+            Err(GitError::InvalidOid)
+        ));
+        assert!(matches!(read_blob(root, ""), Err(GitError::InvalidOid)));
+
+        // Well-formed but unresolvable oid, and a non-blob oid, both 404.
+        assert!(matches!(
+            read_blob(root, "abcdef0123456789"),
+            Err(GitError::BlobNotFound)
+        ));
+        assert!(matches!(
+            read_blob(root, &tree_oid),
+            Err(GitError::BlobNotFound)
+        ));
+    }
+
+    #[test]
+    fn is_safe_repo_path_rejects_traversal_and_absolute_paths() {
+        for ok in ["file.txt", "src/main.rs", "a/b/c.txt"] {
+            assert!(is_safe_repo_path(ok), "{ok} should be safe");
+        }
+        for bad in [
+            "",
+            "/etc/passwd",
+            "..",
+            "../secret",
+            "a/../b",
+            "a/./b",
+            "a//b",
+            "a\\b",
+        ] {
+            assert!(!is_safe_repo_path(bad), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn read_worktree_file_reads_tracked_and_untracked_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        git(&root, &["init", "-b", "main"]);
+        fs::write(root.join("tracked.txt"), "tracked content\n").unwrap();
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("nested/untracked.txt"), "untracked content\n").unwrap();
+
+        assert_eq!(
+            read_worktree_file(&root, "tracked.txt").unwrap(),
+            b"tracked content\n"
+        );
+        assert_eq!(
+            read_worktree_file(&root, "nested/untracked.txt").unwrap(),
+            b"untracked content\n"
+        );
+
+        assert!(matches!(
+            read_worktree_file(&root, "missing.txt"),
+            Err(GitError::FileNotFound)
+        ));
+        assert!(matches!(
+            read_worktree_file(&root, "nested"),
+            Err(GitError::FileNotFound)
+        ));
+        assert!(matches!(
+            read_worktree_file(&root, "../outside.txt"),
+            Err(GitError::InvalidRepoPath)
+        ));
+    }
+
+    #[test]
+    fn read_worktree_file_rejects_symlink_escape() {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "top secret\n").unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        git(&root, &["init", "-b", "main"]);
+        let outside_root = outside.path().canonicalize().unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside_root.join("secret.txt"), root.join("escape.txt"))
+            .unwrap();
+        #[cfg(unix)]
+        assert!(matches!(
+            read_worktree_file(&root, "escape.txt"),
+            Err(GitError::InvalidRepoPath)
+        ));
     }
 }
