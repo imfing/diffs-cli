@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "build": "pnpm --dir web build && cargo build --release && scripts/copy-release-binary.sh",
-    "dev": "cargo run --",
+    "dev": "pnpm --dir web build && cargo run --",
     "format": "pnpm format:rust && pnpm format:web",
     "format:rust": "cargo fmt",
     "format:web": "pnpm --dir web format",
