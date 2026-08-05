@@ -1419,6 +1419,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         config={config}
         isLocal={usesLocalStore}
         baseRef={isBranch ? baseRef : undefined}
+        includeDirty={isBranch ? includeDirty : false}
         onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}

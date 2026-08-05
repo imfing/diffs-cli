@@ -87,6 +87,12 @@ struct RepoContextResponse {
     branch_base: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchesResponse {
+    branches: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct BranchDiffQuery {
     base: Option<String>,
@@ -152,6 +158,7 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
         .route("/api/events", get(handle_events))
         .route("/api/local-diff", get(handle_local_diff))
         .route("/api/branch-diff", get(handle_branch_diff))
+        .route("/api/branches", get(handle_branches))
         .route("/api/repo-context", get(handle_repo_context))
         .route(
             "/api/comments",
@@ -282,6 +289,13 @@ async fn handle_branch_diff(
     }
     match git::branch_diff(&state.cwd, &base, dirty_enabled(query.dirty.as_deref())) {
         Ok(patch) => text(patch),
+        Err(err) => error(StatusCode::BAD_GATEWAY, err),
+    }
+}
+
+async fn handle_branches(State(state): State<AppState>) -> Response {
+    match git::list_branches(&state.cwd) {
+        Ok(branches) => (StatusCode::OK, Json(BranchesResponse { branches })).into_response(),
         Err(err) => error(StatusCode::BAD_GATEWAY, err),
     }
 }

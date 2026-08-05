@@ -3,7 +3,7 @@ use git2::{
     Repository, Status, StatusOptions,
 };
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -138,6 +138,26 @@ pub fn resolve_local_ref(cwd: impl AsRef<Path>, name: &str) -> Option<String> {
     }
     let candidate = format!("origin/{name}");
     ref_exists(cwd, &candidate).then_some(candidate)
+}
+
+/// Local and remote-tracking branch shorthands suitable as base refs for
+/// `/branch?base=…` (e.g. `main`, `origin/main`). Skips remote HEAD aliases.
+pub fn list_branches(cwd: impl AsRef<Path>) -> Result<Vec<String>> {
+    let repo = discover(cwd)?;
+    let mut names = BTreeSet::new();
+    for branch_type in [BranchType::Local, BranchType::Remote] {
+        for entry in repo.branches(Some(branch_type))? {
+            let (branch, _) = entry?;
+            let Some(name) = branch.name()?.filter(|name| !name.is_empty()) else {
+                continue;
+            };
+            if branch_type == BranchType::Remote && name.ends_with("/HEAD") {
+                continue;
+            }
+            names.insert(name.to_string());
+        }
+    }
+    Ok(names.into_iter().collect())
 }
 
 pub fn remote_url(cwd: impl AsRef<Path>, remote: &str) -> Result<String> {
@@ -445,6 +465,30 @@ mod tests {
         assert_eq!(branch_for_repo(&repo).unwrap(), "trunk");
         // The infallible wrapper must agree (it backs comment branch scoping).
         assert_eq!(branch(dir.path()), "trunk");
+    }
+
+    #[test]
+    fn list_branches_includes_local_and_remote_tracking() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "user.email", "diffs@example.com"]);
+        git(root, &["config", "user.name", "Diffs Test"]);
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-m", "initial"]);
+        git(root, &["branch", "feature"]);
+        git(root, &["remote", "add", "origin", root.to_str().unwrap()]);
+        git(root, &["fetch", "origin"]);
+
+        let names = list_branches(root).unwrap();
+        assert!(names.contains(&"main".to_string()), "{names:?}");
+        assert!(names.contains(&"feature".to_string()), "{names:?}");
+        assert!(names.contains(&"origin/main".to_string()), "{names:?}");
+        assert!(
+            !names.iter().any(|name| name.ends_with("/HEAD")),
+            "{names:?}"
+        );
     }
 
     #[test]
