@@ -1138,11 +1138,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         return { oldFile, newFile };
       }
 
-      const prevObjectId = fileDiff.prevObjectId;
-      if (!prevObjectId) throw new Error(`missing prevObjectId for ${fileDiff.name}`);
       const oldName = fileDiff.prevName ?? fileDiff.name;
       const newName = fileDiff.name;
+      const prevObjectId = fileDiff.prevObjectId;
       const newObjectId = fileDiff.newObjectId;
+      // Pure renames carry no `index` line (and thus no object ids); their
+      // content is unchanged, so read the new path from the worktree.
+      if (fileDiff.type === "rename-pure") {
+        const newFile = await loadWorktreeFileContents(newName);
+        return { oldFile: null, newFile };
+      }
+      if (!prevObjectId || isZeroOid(prevObjectId)) {
+        throw new Error(`missing prevObjectId for ${fileDiff.name}`);
+      }
       const [oldFile, newFile] = await Promise.all([
         loadBlobFileContents(prevObjectId, oldName),
         newObjectId && !isZeroOid(newObjectId)
