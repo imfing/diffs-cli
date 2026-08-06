@@ -15,6 +15,8 @@ import {
   type CodeViewItem,
   type CodeViewScrollBehavior,
   type DiffLineAnnotation,
+  type FileContents,
+  type FileDiffLoadedFiles,
   type FileDiffMetadata,
   type SelectedLineRange,
 } from "@pierre/diffs";
@@ -272,6 +274,42 @@ function createPendingThread(target: CommentTarget, body: string): ReviewThread 
     pending: true,
     draft,
   };
+}
+
+// Local/branch diffs use an all-zeros object id for the working-tree side
+// (git diffs against the workdir, not a blob), so that side has to be read
+// from disk instead of the object database.
+function isZeroOid(oid: string): boolean {
+  return /^0+$/.test(oid);
+}
+
+// Full-file hydration for `loadDiffFiles`: fetches one side of a PR file from
+// its GitHub repo/sha via the server-side proxy (fork-aware; see
+// gh::pull_request_file).
+async function loadPullRequestFileContents(
+  org: string,
+  repo: string,
+  number: string,
+  path: string,
+  side: "old" | "new",
+): Promise<FileContents> {
+  const url = `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}/file?path=${encodeURIComponent(path)}&side=${side}`;
+  const contents = await apiFetch<string>(url);
+  return { name: path, contents };
+}
+
+// Full-file hydration for a committed blob (local/branch diffs' non-worktree
+// side), keyed for highlight cache reuse across renders of the same blob.
+async function loadBlobFileContents(oid: string, name: string): Promise<FileContents> {
+  const contents = await apiFetch<string>(`/api/blob?oid=${encodeURIComponent(oid)}`);
+  return { name, contents, cacheKey: `blob:${oid}` };
+}
+
+// Full-file hydration for the zero-oid working-tree side of a local/branch
+// diff (uncommitted content, so there's no blob to fetch by oid).
+async function loadWorktreeFileContents(path: string): Promise<FileContents> {
+  const contents = await apiFetch<string>(`/api/blob?path=${encodeURIComponent(path)}&worktree=1`);
+  return { name: path, contents };
 }
 
 export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch" } = {}) {
@@ -1083,6 +1121,47 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     }
   }, [commentThreads, commentTarget, initialItems, filePathToItemId]);
 
+  const loadDiffFiles = useCallback(
+    async (fileDiff: FileDiffMetadata): Promise<FileDiffLoadedFiles> => {
+      if (!usesLocalStore) {
+        if (!org || !repo || !number) throw new Error("missing pull request target");
+        const newPath = fileDiff.name;
+        if (fileDiff.type === "rename-pure") {
+          const newFile = await loadPullRequestFileContents(org, repo, number, newPath, "new");
+          return { oldFile: null, newFile };
+        }
+        const oldPath = fileDiff.prevName ?? fileDiff.name;
+        const [oldFile, newFile] = await Promise.all([
+          loadPullRequestFileContents(org, repo, number, oldPath, "old"),
+          loadPullRequestFileContents(org, repo, number, newPath, "new"),
+        ]);
+        return { oldFile, newFile };
+      }
+
+      const oldName = fileDiff.prevName ?? fileDiff.name;
+      const newName = fileDiff.name;
+      const prevObjectId = fileDiff.prevObjectId;
+      const newObjectId = fileDiff.newObjectId;
+      // Pure renames carry no `index` line (and thus no object ids); their
+      // content is unchanged, so read the new path from the worktree.
+      if (fileDiff.type === "rename-pure") {
+        const newFile = await loadWorktreeFileContents(newName);
+        return { oldFile: null, newFile };
+      }
+      if (!prevObjectId || isZeroOid(prevObjectId)) {
+        throw new Error(`missing prevObjectId for ${fileDiff.name}`);
+      }
+      const [oldFile, newFile] = await Promise.all([
+        loadBlobFileContents(prevObjectId, oldName),
+        newObjectId && !isZeroOid(newObjectId)
+          ? loadBlobFileContents(newObjectId, newName)
+          : loadWorktreeFileContents(newName),
+      ]);
+      return { oldFile, newFile };
+    },
+    [usesLocalStore, org, repo, number],
+  );
+
   const codeViewOptions = useMemo(
     () => ({
       theme: selectedDiffTheme.theme,
@@ -1102,6 +1181,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       unsafeCSS: "[data-utility-button] { margin-right: 0; }",
       onGutterUtilityClick: openCommentTarget,
       onLineSelectionEnd: openCommentTarget,
+      loadDiffFiles,
       layout: { paddingTop: 0, paddingBottom: 12, gap: 12 },
     }),
     [
@@ -1113,6 +1193,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       showLineNumbers,
       wordWrap,
       openCommentTarget,
+      loadDiffFiles,
     ],
   );
 
@@ -1346,6 +1427,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         config={config}
         isLocal={usesLocalStore}
         baseRef={isBranch ? baseRef : undefined}
+        includeDirty={isBranch ? includeDirty : false}
         onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}

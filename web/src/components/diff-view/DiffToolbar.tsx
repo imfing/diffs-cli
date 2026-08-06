@@ -1,7 +1,9 @@
-import { lazy, Suspense, type ReactNode, type SVGProps } from "react";
+import { lazy, Suspense, useState, type ReactNode, type SVGProps } from "react";
 import { Link } from "react-router";
 import {
   IconArrowLeft,
+  IconCheck,
+  IconChevronDown,
   IconFileDiff,
   IconFileExport,
   IconGitBranch,
@@ -28,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { apiFetch } from "@/lib/api";
 import type { AppConfig, DiffSettingsProps, PullRequestInfo } from "./types";
 import { displayLocalPath, headerIconButtonClass } from "./helpers";
 
@@ -56,6 +59,79 @@ function BranchChip({ label, title }: { label: string; title: string }) {
       <IconGitBranch size={12} />
       <span className="truncate">{label}</span>
     </span>
+  );
+}
+
+function branchDiffHref(base: string, includeDirty: boolean) {
+  const params = new URLSearchParams();
+  params.set("base", base);
+  if (includeDirty) params.set("dirty", "1");
+  return `/branch?${params.toString()}`;
+}
+
+function BaseBranchSwitcher({ baseRef, includeDirty }: { baseRef: string; includeDirty: boolean }) {
+  const [branches, setBranches] = useState<string[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const loadBranches = () => {
+    setLoading(true);
+    apiFetch<{ branches: string[] }>("/api/branches")
+      .then((data) => {
+        const names = [...(data.branches ?? [])];
+        if (baseRef !== "" && !names.includes(baseRef)) names.unshift(baseRef);
+        setBranches(names);
+      })
+      .catch(() => setBranches(baseRef !== "" ? [baseRef] : []))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open) loadBranches();
+      }}
+    >
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex max-w-[12rem] shrink-0 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-ring dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+            title={`Base: ${baseRef}. Click to switch.`}
+            aria-label={`Base branch ${baseRef}. Click to switch.`}
+          >
+            <span className="min-w-0 truncate">{baseRef}</span>
+            <IconChevronDown size={12} className="shrink-0 opacity-60" />
+          </button>
+        }
+      />
+      <DropdownMenuContent
+        align="start"
+        className="max-h-72 min-w-44 overflow-y-auto [&_[data-slot=dropdown-menu-item]]:text-[12px]"
+      >
+        {loading && branches == null ? (
+          <div className="px-2 py-1.5 text-[12px] text-muted-foreground">Loading branches…</div>
+        ) : (branches?.length ?? 0) === 0 ? (
+          <div className="px-2 py-1.5 text-[12px] text-muted-foreground">No branches found</div>
+        ) : (
+          branches?.map((name) => {
+            const selected = name === baseRef;
+            return (
+              <DropdownMenuItem
+                key={name}
+                render={<Link to={branchDiffHref(name, includeDirty)} />}
+                className={selected ? "font-medium" : undefined}
+                aria-current={selected ? "true" : undefined}
+              >
+                <span className="flex size-4 shrink-0 items-center justify-center">
+                  {selected ? <IconCheck size={14} /> : null}
+                </span>
+                <span className="min-w-0 truncate">{name}</span>
+              </DropdownMenuItem>
+            );
+          })
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -166,6 +242,7 @@ export function DiffToolbar({
   config,
   isLocal,
   baseRef,
+  includeDirty = false,
   onSettingsOpenChange,
   onSidebarToggle,
   onSubmitPendingComments,
@@ -190,6 +267,7 @@ export function DiffToolbar({
   config: AppConfig;
   isLocal: boolean;
   baseRef?: string;
+  includeDirty?: boolean;
   onSettingsOpenChange: (open: boolean) => void;
   onSidebarToggle: () => void;
   onSubmitPendingComments: () => void;
@@ -238,7 +316,7 @@ export function DiffToolbar({
             </span>
             {baseRef && baseRef.trim() !== "" && (
               <>
-                <BranchChip label={baseRef.trim()} title={`Base: ${baseRef.trim()}`} />
+                <BaseBranchSwitcher baseRef={baseRef.trim()} includeDirty={includeDirty} />
                 <IconArrowLeft
                   size={12}
                   className="shrink-0 text-neutral-400 dark:text-neutral-500"

@@ -87,6 +87,12 @@ struct RepoContextResponse {
     branch_base: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchesResponse {
+    branches: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct BranchDiffQuery {
     base: Option<String>,
@@ -98,6 +104,19 @@ struct CommentTargetQuery {
     org: Option<String>,
     repo: Option<String>,
     number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BlobQuery {
+    oid: Option<String>,
+    path: Option<String>,
+    worktree: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PullFileQuery {
+    path: Option<String>,
+    side: Option<String>,
 }
 
 pub struct RunningServer {
@@ -139,6 +158,7 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
         .route("/api/events", get(handle_events))
         .route("/api/local-diff", get(handle_local_diff))
         .route("/api/branch-diff", get(handle_branch_diff))
+        .route("/api/branches", get(handle_branches))
         .route("/api/repo-context", get(handle_repo_context))
         .route(
             "/api/comments",
@@ -162,6 +182,11 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
             get(handle_pull_request_info),
         )
         .route("/api/patch/{org}/{repo}/{number}", get(handle_patch))
+        .route("/api/blob", get(handle_blob))
+        .route(
+            "/api/pull/{org}/{repo}/{number}/file",
+            get(handle_pull_file),
+        )
         .fallback(handle_static)
         .with_state(state);
     Ok(RunningServer {
@@ -264,6 +289,13 @@ async fn handle_branch_diff(
     }
     match git::branch_diff(&state.cwd, &base, dirty_enabled(query.dirty.as_deref())) {
         Ok(patch) => text(patch),
+        Err(err) => error(StatusCode::BAD_GATEWAY, err),
+    }
+}
+
+async fn handle_branches(State(state): State<AppState>) -> Response {
+    match git::list_branches(&state.cwd) {
+        Ok(branches) => (StatusCode::OK, Json(BranchesResponse { branches })).into_response(),
         Err(err) => error(StatusCode::BAD_GATEWAY, err),
     }
 }
@@ -494,6 +526,61 @@ async fn handle_patch(
     }
 }
 
+/// Serves either a repository blob by object id (`?oid=`) or a working-tree
+/// file by repo-relative path (`?path=&worktree=1`), for `loadDiffFiles`
+/// hydration of local/branch diffs. The two forms are mutually exclusive.
+async fn handle_blob(State(state): State<AppState>, Query(query): Query<BlobQuery>) -> Response {
+    let oid = query.oid.as_deref().unwrap_or_default().trim();
+    let path = query.path.as_deref().unwrap_or_default().trim();
+    if oid.is_empty() && path.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "oid or path query parameter is required",
+        );
+    }
+    if !oid.is_empty() && !path.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "oid and path are mutually exclusive",
+        );
+    }
+    let result = if !oid.is_empty() {
+        git::read_blob(&state.cwd, oid)
+    } else if dirty_enabled(query.worktree.as_deref()) {
+        git::read_worktree_file(&state.cwd, path)
+    } else {
+        return error(StatusCode::BAD_REQUEST, "path requires worktree=1");
+    };
+    match result {
+        Ok(bytes) => blob_response(bytes),
+        Err(err) => blob_error(err),
+    }
+}
+
+/// Fetches a single file's raw content from one side of a pull request, for
+/// `loadDiffFiles` hydration of PR diffs.
+async fn handle_pull_file(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, String)>,
+    Query(query): Query<PullFileQuery>,
+) -> Response {
+    if let Err(err) = validate_pr_path(&org, &repo, &number) {
+        return error(StatusCode::BAD_REQUEST, err);
+    }
+    let path = query.path.as_deref().unwrap_or_default().trim();
+    if !git::is_safe_repo_path(path) {
+        return error(StatusCode::BAD_REQUEST, "invalid path query parameter");
+    }
+    let side = query.side.as_deref().unwrap_or_default().trim();
+    if side != "old" && side != "new" {
+        return error(StatusCode::BAD_REQUEST, "side must be old or new");
+    }
+    match gh::pull_request_file(&state.github_host, &org, &repo, &number, path, side).await {
+        Ok(bytes) => blob_response(bytes),
+        Err(err) => error(StatusCode::BAD_GATEWAY, err),
+    }
+}
+
 async fn handle_static(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -547,6 +634,38 @@ fn text(patch: String) -> Response {
 
 fn error(status: StatusCode, err: impl std::fmt::Display) -> Response {
     (status, Json(json!({ "error": err.to_string() }))).into_response()
+}
+
+/// Cap on hydrated file contents (blob or PR file): large enough for any
+/// source file worth diffing, small enough to bound memory for one request.
+const MAX_BLOB_BYTES: usize = 5 * 1024 * 1024;
+
+/// Renders raw file bytes for `loadDiffFiles` hydration: rejects oversized
+/// content (413) and binary content, detected via an embedded NUL byte (415),
+/// otherwise decodes as UTF-8 (lossily, for non-UTF-8 text).
+fn blob_response(bytes: Vec<u8>) -> Response {
+    if bytes.len() > MAX_BLOB_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "file is too large to hydrate",
+        );
+    }
+    if bytes.contains(&0) {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "binary file cannot be hydrated",
+        );
+    }
+    text(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn blob_error(err: git::GitError) -> Response {
+    match err {
+        git::GitError::InvalidOid | git::GitError::InvalidRepoPath => {
+            error(StatusCode::BAD_REQUEST, err)
+        }
+        _ => error(StatusCode::NOT_FOUND, err),
+    }
 }
 
 fn valid(check: impl Fn(&str) -> bool, value: &str) -> String {

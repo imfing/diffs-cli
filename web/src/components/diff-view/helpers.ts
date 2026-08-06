@@ -19,6 +19,12 @@ export const diffThemeOptions: readonly DiffThemeOption[] = [
     themeType: "system",
   },
   {
+    id: "pierre-soft",
+    label: "Pierre Soft",
+    theme: { dark: "pierre-dark-soft", light: "pierre-light-soft" },
+    themeType: "system",
+  },
+  {
     id: "github",
     label: "GitHub",
     theme: { dark: "github-dark", light: "github-light" },

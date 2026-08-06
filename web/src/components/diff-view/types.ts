@@ -12,6 +12,7 @@ export type DiffOrderByOption = {
 };
 export type DiffThemeId =
   | "pierre"
+  | "pierre-soft"
   | "github"
   | "dark-plus"
   | "light-plus"
