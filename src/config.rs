@@ -67,6 +67,7 @@ pub fn is_diff_theme(value: &str) -> bool {
     matches!(
         value,
         "pierre"
+            | "pierre-soft"
             | "github"
             | "dark-plus"
             | "light-plus"
@@ -158,6 +159,7 @@ line_backgrounds = true
         assert!(is_color_scheme("system"));
         assert!(!is_color_scheme("auto"));
         assert!(is_diff_theme("pierre"));
+        assert!(is_diff_theme("pierre-soft"));
         assert!(!is_diff_theme("missing"));
         assert!(is_diff_style("split"));
         assert!(!is_diff_style("side-by-side"));

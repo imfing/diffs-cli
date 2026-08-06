@@ -76,7 +76,7 @@ Optional. `diffs` reads `~/.config/diffs/config.toml` on startup:
 ```toml
 [ui]
 color_scheme = "system"    # system, light, dark
-diff_theme = "github"      # github, dark-plus, light-plus, one-dark-pro, ...
+diff_theme = "github"      # pierre, pierre-soft, github, dark-plus, one-dark-pro, ...
 diff_style = "split"       # split, unified
 ui_font_family = "Aptos"   # preferred UI font stack
 code_font_family = "Menlo" # preferred code font stack
