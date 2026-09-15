@@ -378,7 +378,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     branchBase?: string;
   } | null>(null);
   const repoContextRequested = useRef(false);
-  const viewerRef = useRef<CodeViewHandle<AnnotationMeta> | null>(null);
+  const viewerRef = useRef<CodeViewHandle<AnnotationMeta, undefined> | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const currentFileRef = useRef<string | null>(null);
   const programmaticScrollAtRef = useRef(0);
