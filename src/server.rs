@@ -13,7 +13,7 @@ use axum::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
     },
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -119,6 +119,12 @@ struct PullFileQuery {
     side: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct WorktreeWriteBody {
+    path: String,
+    contents: String,
+}
+
 pub struct RunningServer {
     pub router: Router,
     _watcher: Option<notify::RecommendedWatcher>,
@@ -183,6 +189,7 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
         )
         .route("/api/patch/{org}/{repo}/{number}", get(handle_patch))
         .route("/api/blob", get(handle_blob))
+        .route("/api/worktree-file", put(handle_write_worktree_file))
         .route(
             "/api/pull/{org}/{repo}/{number}/file",
             get(handle_pull_file),
@@ -553,6 +560,26 @@ async fn handle_blob(State(state): State<AppState>, Query(query): Query<BlobQuer
     };
     match result {
         Ok(bytes) => blob_response(bytes),
+        Err(err) => blob_error(err),
+    }
+}
+
+/// Overwrites an existing working-tree file with edited contents from the
+/// inline editor. Path validation and the existing-file requirement live in
+/// `git::write_worktree_file`.
+async fn handle_write_worktree_file(
+    State(state): State<AppState>,
+    Json(body): Json<WorktreeWriteBody>,
+) -> Response {
+    let path = body.path.trim();
+    if path.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "path is required");
+    }
+    if body.contents.len() > MAX_BLOB_BYTES {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "contents too large");
+    }
+    match git::write_worktree_file(&state.cwd, path, body.contents.as_bytes()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(err) => blob_error(err),
     }
 }
