@@ -1194,9 +1194,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   // Inline editing targets the worktree. The local diff is HEAD → worktree
   // (see git::local_diff), so the new side of every non-deleted file is the
   // working-tree file itself; PR and branch diffs review committed states and
-  // stay read-only.
+  // stay read-only. Pure renames have no hunks, so the diff view has no rows
+  // to edit.
   const canEditFile = useCallback(
-    (fileDiff: FileDiffMetadata): boolean => isLocal && fileDiff.type !== "deleted",
+    (fileDiff: FileDiffMetadata): boolean =>
+      isLocal && fileDiff.type !== "deleted" && fileDiff.type !== "rename-pure",
     [isLocal],
   );
 
@@ -1207,8 +1209,26 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     editDecisionRef.current = "reject";
     editingItemIdRef.current = itemId;
     setEditingItemId(itemId);
+    // Edit sessions need a fully hydrated diff, but Pierre only hydrates
+    // change/rename diffs. A new file's patch already holds every line, so
+    // mark it complete for the session instead of leaving it stuck partial.
+    // The copy needs its own cacheKey: Pierre treats diffs with equal keys as
+    // the same target and would keep the partial one.
+    const fileDiff =
+      item.type === "diff" && item.fileDiff.type === "new" && item.fileDiff.isPartial
+        ? {
+            ...item.fileDiff,
+            isPartial: false,
+            cacheKey: `${item.fileDiff.cacheKey ?? item.id}:complete`,
+          }
+        : undefined;
     // updateItem ignores records whose version is unchanged; bump it.
-    viewer.updateItem({ ...item, edit: true, version: (item.version ?? 0) + 1 });
+    viewer.updateItem({
+      ...item,
+      ...(fileDiff ? { fileDiff } : {}),
+      edit: true,
+      version: (item.version ?? 0) + 1,
+    });
   }, []);
 
   const finishEditingFile = useCallback((itemId: string, decision: "accept" | "reject") => {
