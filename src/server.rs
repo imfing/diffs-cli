@@ -13,7 +13,7 @@ use axum::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
     },
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -119,6 +119,12 @@ struct PullFileQuery {
     side: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct WorktreeWriteBody {
+    path: String,
+    contents: String,
+}
+
 pub struct RunningServer {
     pub router: Router,
     _watcher: Option<notify::RecommendedWatcher>,
@@ -183,6 +189,7 @@ pub fn new(cfg: ServerConfig) -> anyhow::Result<RunningServer> {
         )
         .route("/api/patch/{org}/{repo}/{number}", get(handle_patch))
         .route("/api/blob", get(handle_blob))
+        .route("/api/worktree-file", put(handle_write_worktree_file))
         .route(
             "/api/pull/{org}/{repo}/{number}/file",
             get(handle_pull_file),
@@ -557,6 +564,26 @@ async fn handle_blob(State(state): State<AppState>, Query(query): Query<BlobQuer
     }
 }
 
+/// Overwrites an existing working-tree file with edited contents from the
+/// inline editor. Path validation and the existing-file requirement live in
+/// `git::write_worktree_file`.
+async fn handle_write_worktree_file(
+    State(state): State<AppState>,
+    Json(body): Json<WorktreeWriteBody>,
+) -> Response {
+    let path = body.path.trim();
+    if path.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "path is required");
+    }
+    if body.contents.len() > MAX_BLOB_BYTES {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "contents too large");
+    }
+    match git::write_worktree_file(&state.cwd, path, body.contents.as_bytes()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => blob_error(err),
+    }
+}
+
 /// Fetches a single file's raw content from one side of a pull request, for
 /// `loadDiffFiles` hydration of PR diffs.
 async fn handle_pull_file(
@@ -836,6 +863,10 @@ fn start_watcher(
     std::thread::spawn(move || {
         // Repository handle for `git status` lookups; lives only on this thread.
         let repo = git::discover(&status_cwd).ok();
+        // Status as of the previous tick. A touched path that was changed then
+        // but is clean now (e.g. saved back to its HEAD content) drops out of
+        // the current status, yet its removal still changes the diff.
+        let mut last_status = repo.as_ref().and_then(|repo| git::status_map(repo).ok());
         loop {
             let mut pending: BTreeSet<String> = BTreeSet::new();
             let mut git_state = false;
@@ -858,7 +889,11 @@ fn start_watcher(
                 Some(map) => changed_files_for_events(&pending, map),
                 None => changed_files_from_events(&pending),
             };
-            let broadcast = !changed.is_empty() || git_state;
+            let reverted = last_status
+                .as_ref()
+                .is_some_and(|prev| !changed_files_for_events(&pending, prev).is_empty());
+            last_status = status;
+            let broadcast = !changed.is_empty() || reverted || git_state;
             if broadcast {
                 let _ = events.send(());
                 if let Some(on_change) = &on_change {
@@ -1181,6 +1216,60 @@ mod tests {
             "/repo/src/.gitignore"
         )));
         assert!(!is_structurally_ignored(FsPath::new("/repo/my.git/x")));
+    }
+
+    #[test]
+    fn watcher_broadcasts_when_file_returns_to_head() {
+        use std::process::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?} failed");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(root.join("a.txt"), "base\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+
+        let (events, mut rx) = broadcast::channel(16);
+        let _watcher = start_watcher(root.clone(), events, None).unwrap();
+        let expect_broadcast = |rx: &mut broadcast::Receiver<()>, what: &str| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                match rx.try_recv() {
+                    Ok(()) => break,
+                    Err(broadcast::error::TryRecvError::Empty)
+                        if std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(err) => panic!("no broadcast after {what}: {err:?}"),
+                }
+            }
+            // Let the burst settle and drop duplicates before the next step.
+            std::thread::sleep(WATCH_DEBOUNCE * 4);
+            while rx.try_recv().is_ok() {}
+        };
+
+        std::fs::write(root.join("a.txt"), "edited\n").unwrap();
+        expect_broadcast(&mut rx, "modifying a.txt");
+        // Back to HEAD content: a.txt leaves `git status`, but the diff changed.
+        std::fs::write(root.join("a.txt"), "base\n").unwrap();
+        expect_broadcast(&mut rx, "restoring a.txt to HEAD");
     }
 
     #[test]

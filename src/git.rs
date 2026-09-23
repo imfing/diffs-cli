@@ -441,6 +441,28 @@ pub fn read_worktree_file(cwd: impl AsRef<Path>, rel_path: &str) -> Result<Vec<u
     std::fs::read(&canonical).map_err(|_| GitError::FileNotFound)
 }
 
+/// Overwrites a repository-relative working-tree file with `contents`. Applies
+/// the same path validation as `read_worktree_file` and only writes to files
+/// that already exist, so inline edits can't create new paths.
+pub fn write_worktree_file(cwd: impl AsRef<Path>, rel_path: &str, contents: &[u8]) -> Result<()> {
+    if !is_safe_repo_path(rel_path) {
+        return Err(GitError::InvalidRepoPath);
+    }
+    let root = root(cwd)?;
+    let canonical_root = root.canonicalize().map_err(|_| GitError::NoWorkdir)?;
+    let candidate = root.join(rel_path);
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|_| GitError::FileNotFound)?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(GitError::InvalidRepoPath);
+    }
+    if !canonical.is_file() {
+        return Err(GitError::FileNotFound);
+    }
+    std::fs::write(&canonical, contents).map_err(|_| GitError::FileNotFound)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,6 +693,27 @@ mod tests {
         ));
         assert!(matches!(
             read_worktree_file(&root, "../outside.txt"),
+            Err(GitError::InvalidRepoPath)
+        ));
+    }
+
+    #[test]
+    fn write_worktree_file_overwrites_existing_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        git(&root, &["init", "-b", "main"]);
+        fs::write(root.join("existing.txt"), "before\n").unwrap();
+
+        write_worktree_file(&root, "existing.txt", b"after\n").unwrap();
+        assert_eq!(fs::read(root.join("existing.txt")).unwrap(), b"after\n");
+
+        assert!(matches!(
+            write_worktree_file(&root, "created.txt", b"nope"),
+            Err(GitError::FileNotFound)
+        ));
+        assert!(!root.join("created.txt").exists());
+        assert!(matches!(
+            write_worktree_file(&root, "../outside.txt", b"nope"),
             Err(GitError::InvalidRepoPath)
         ));
     }
