@@ -441,9 +441,8 @@ pub fn read_worktree_file(cwd: impl AsRef<Path>, rel_path: &str) -> Result<Vec<u
     std::fs::read(&canonical).map_err(|_| GitError::FileNotFound)
 }
 
-/// Overwrites a repository-relative working-tree file with `contents`. Applies
-/// the same path validation as `read_worktree_file` and only writes to files
-/// that already exist, so inline edits can't create new paths.
+/// Overwrites an existing working-tree file. Same path checks as
+/// `read_worktree_file`; never creates new files.
 pub fn write_worktree_file(cwd: impl AsRef<Path>, rel_path: &str, contents: &[u8]) -> Result<()> {
     if !is_safe_repo_path(rel_path) {
         return Err(GitError::InvalidRepoPath);

@@ -564,9 +564,7 @@ async fn handle_blob(State(state): State<AppState>, Query(query): Query<BlobQuer
     }
 }
 
-/// Overwrites an existing working-tree file with edited contents from the
-/// inline editor. Path validation and the existing-file requirement live in
-/// `git::write_worktree_file`.
+/// Saves inline-editor contents to an existing working-tree file.
 async fn handle_write_worktree_file(
     State(state): State<AppState>,
     Json(body): Json<WorktreeWriteBody>,
@@ -863,9 +861,8 @@ fn start_watcher(
     std::thread::spawn(move || {
         // Repository handle for `git status` lookups; lives only on this thread.
         let repo = git::discover(&status_cwd).ok();
-        // Status as of the previous tick. A touched path that was changed then
-        // but is clean now (e.g. saved back to its HEAD content) drops out of
-        // the current status, yet its removal still changes the diff.
+        // Previous status, so a file restored to HEAD (no longer in status)
+        // still triggers a refresh.
         let mut last_status = repo.as_ref().and_then(|repo| git::status_map(repo).ok());
         loop {
             let mut pending: BTreeSet<String> = BTreeSet::new();
@@ -1260,14 +1257,14 @@ mod tests {
                     Err(err) => panic!("no broadcast after {what}: {err:?}"),
                 }
             }
-            // Let the burst settle and drop duplicates before the next step.
+            // Drain duplicate events before the next step.
             std::thread::sleep(WATCH_DEBOUNCE * 4);
             while rx.try_recv().is_ok() {}
         };
 
         std::fs::write(root.join("a.txt"), "edited\n").unwrap();
         expect_broadcast(&mut rx, "modifying a.txt");
-        // Back to HEAD content: a.txt leaves `git status`, but the diff changed.
+        // Restoring HEAD content removes a.txt from status; still a change.
         std::fs::write(root.join("a.txt"), "base\n").unwrap();
         expect_broadcast(&mut rx, "restoring a.txt to HEAD");
     }

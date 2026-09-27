@@ -387,9 +387,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const repoContextRequested = useRef(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta, undefined> | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  // Mirrors editingItemId for callbacks that must not re-subscribe (SSE load).
+  // Ref copy for callbacks that shouldn't re-subscribe.
   const editingItemIdRef = useRef<string | null>(null);
-  // Set by Save/Cancel just before toggling edit off; read in onItemEditComplete.
+  // Save/Cancel choice, read by handleItemEditComplete.
   const editDecisionRef = useRef<"accept" | "reject">("reject");
   const pendingDiffReloadRef = useRef(false);
   const reloadDiffRef = useRef<(() => void) | null>(null);
@@ -511,8 +511,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     let fallbackInterval: number | undefined;
 
     const load = () => {
-      // A reload replaces the patch and remounts CodeView, which would tear
-      // down an active edit session; defer until the session completes.
+      // Reloading remounts CodeView and would kill the edit; defer it.
       if (editingItemIdRef.current != null) {
         pendingDiffReloadRef.current = true;
         return;
@@ -922,8 +921,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   ]);
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    // The inline editor's input lives in shadow DOM, so `target` is the
-    // shadow host, not an editable element; never steal keys mid-edit.
+    // The editor lives in shadow DOM, so the target check below misses it.
     if (editingItemIdRef.current != null) return;
     const target = e.target as HTMLElement | null;
     if (target && (target.isContentEditable || EDITABLE_TAGS.test(target.tagName))) {
@@ -1177,9 +1175,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       }
       const [oldFile, newFile] = await Promise.all([
         loadBlobFileContents(prevObjectId, oldName),
-        // In local mode the new side is the working tree itself; its `index`
-        // oid is computed on the fly and generally absent from the object
-        // database, so read the file instead of the blob.
+        // Local worktree oids usually aren't in the object db; read the file.
         isLocal && fileDiff.type !== "deleted"
           ? loadWorktreeFileContents(newName)
           : newObjectId && !isZeroOid(newObjectId)
@@ -1191,11 +1187,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     [usesLocalStore, isLocal, org, repo, number],
   );
 
-  // Inline editing targets the worktree. The local diff is HEAD → worktree
-  // (see git::local_diff), so the new side of every non-deleted file is the
-  // working-tree file itself; PR and branch diffs review committed states and
-  // stay read-only. Pure renames have no hunks, so the diff view has no rows
-  // to edit.
+  // Only local diffs edit the worktree. Pure renames have no rows to edit.
   const canEditFile = useCallback(
     (fileDiff: FileDiffMetadata): boolean =>
       isLocal && fileDiff.type !== "deleted" && fileDiff.type !== "rename-pure",
@@ -1209,11 +1201,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     editDecisionRef.current = "reject";
     editingItemIdRef.current = itemId;
     setEditingItemId(itemId);
-    // Edit sessions need a fully hydrated diff, but Pierre only hydrates
-    // change/rename diffs. A new file's patch already holds every line, so
-    // mark it complete for the session instead of leaving it stuck partial.
-    // The copy needs its own cacheKey: Pierre treats diffs with equal keys as
-    // the same target and would keep the partial one.
+    // Pierre won't hydrate new files, so they'd stay partial and uneditable.
+    // Their patch has every line, so mark them complete; a new cacheKey makes
+    // Pierre pick up the copy.
     const fileDiff =
       item.type === "diff" && item.fileDiff.type === "new" && item.fileDiff.isPartial
         ? {
@@ -1222,7 +1212,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             cacheKey: `${item.fileDiff.cacheKey ?? item.id}:complete`,
           }
         : undefined;
-    // updateItem ignores records whose version is unchanged; bump it.
+    // updateItem ignores same-version updates.
     viewer.updateItem({
       ...item,
       ...(fileDiff ? { fileDiff } : {}),
@@ -1236,7 +1226,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     const viewer = viewerRef.current;
     const item = viewer?.getItem(itemId);
     if (viewer && item) {
-      // Toggling edit off ends the session; handleItemEditComplete decides.
+      // Ends the session; handleItemEditComplete applies the decision.
       viewer.updateItem({ ...item, edit: false, version: (item.version ?? 0) + 1 });
     } else {
       editingItemIdRef.current = null;
@@ -1253,7 +1243,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       });
     } catch (err) {
       console.error(`Failed to save ${path}:`, err);
-      // Re-sync the view with the worktree, which still has the old content.
+      // Disk still has the old content; re-sync the view.
       reloadDiffRef.current?.();
     }
   }, []);
@@ -1270,8 +1260,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       editDecisionRef.current = "reject";
       const hadPendingReload = pendingDiffReloadRef.current;
       pendingDiffReloadRef.current = false;
-      // On accept the save itself triggers a watcher reload, so a deferred
-      // reload only needs to run explicitly on the reject paths.
+      // Saving triggers a reload itself; only reject needs an explicit one.
       const reject = () => {
         if (hadPendingReload) reloadDiffRef.current?.();
         return "reject" as const;
@@ -1279,8 +1268,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       if (decision !== "accept" || item.type !== "diff") return reject();
       const completed = event as FileDiffEditCompleteEvent<AnnotationMeta, undefined>;
       if (!completed.newFile) return reject();
-      // The event is frozen; re-key the accepted diff in place (per the API
-      // contract) so keyed render caching doesn't serve the replaced value.
+      // New cacheKey so the render cache doesn't serve the old diff.
       completed.fileDiff.cacheKey = `edited:${item.id}:${Date.now()}`;
       void saveWorktreeFile(completed.fileDiff.name, completed.newFile.contents);
       return "accept";
