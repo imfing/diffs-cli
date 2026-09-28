@@ -21,9 +21,11 @@ interface CopyAction {
 export function FileActionsMenu({
   path,
   diffText,
+  onEdit,
 }: {
   path: string;
   diffText: string | undefined;
+  onEdit?: () => void;
 }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const resetTimer = useRef(0);
@@ -81,6 +83,7 @@ export function FileActionsMenu({
               </DropdownMenuItem>
             );
           })}
+          {onEdit && <DropdownMenuItem onClick={onEdit}>Edit file</DropdownMenuItem>}
         </DropdownMenuContent>
       </DropdownMenu>
     </span>

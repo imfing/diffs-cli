@@ -20,7 +20,14 @@ import {
   type FileDiffMetadata,
   type SelectedLineRange,
 } from "@pierre/diffs";
-import { CodeView, type CodeViewHandle, useWorkerPool } from "@pierre/diffs/react";
+import {
+  CodeView,
+  type CodeViewHandle,
+  type CodeViewItemEditCompleteHandler,
+  EditProvider,
+  useWorkerPool,
+} from "@pierre/diffs/react";
+import { Editor, type EditorFactory, type FileDiffEditCompleteEvent } from "@pierre/diffs/edit";
 import {
   applyColorScheme,
   initialColorScheme,
@@ -39,7 +46,7 @@ import {
   IconExternalLink,
   IconFileX,
 } from "@tabler/icons-react";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Empty,
   EmptyContent,
@@ -379,6 +386,13 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   } | null>(null);
   const repoContextRequested = useRef(false);
   const viewerRef = useRef<CodeViewHandle<AnnotationMeta, undefined> | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  // Ref copy for callbacks that shouldn't re-subscribe.
+  const editingItemIdRef = useRef<string | null>(null);
+  // Save/Cancel choice, read by handleItemEditComplete.
+  const editDecisionRef = useRef<"accept" | "reject">("reject");
+  const pendingDiffReloadRef = useRef(false);
+  const reloadDiffRef = useRef<(() => void) | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const currentFileRef = useRef<string | null>(null);
   const programmaticScrollAtRef = useRef(0);
@@ -497,6 +511,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     let fallbackInterval: number | undefined;
 
     const load = () => {
+      // Reloading remounts CodeView and would kill the edit; defer it.
+      if (editingItemIdRef.current != null) {
+        pendingDiffReloadRef.current = true;
+        return;
+      }
       const endpoint = isBranch
         ? `/api/branch-diff?base=${encodeURIComponent(baseRef)}${includeDirty ? "&dirty=1" : ""}`
         : isLocal
@@ -527,6 +546,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       return;
     }
     if (!usesLocalStore && (!org || !repo || !number)) return;
+    reloadDiffRef.current = load;
     load();
     if (usesLocalStore) {
       eventSource = new EventSource("/api/events");
@@ -901,6 +921,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   ]);
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // The editor lives in shadow DOM, so the target check below misses it.
+    if (editingItemIdRef.current != null) return;
     const target = e.target as HTMLElement | null;
     if (target && (target.isContentEditable || EDITABLE_TAGS.test(target.tagName))) {
       return;
@@ -1153,13 +1175,110 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       }
       const [oldFile, newFile] = await Promise.all([
         loadBlobFileContents(prevObjectId, oldName),
-        newObjectId && !isZeroOid(newObjectId)
-          ? loadBlobFileContents(newObjectId, newName)
-          : loadWorktreeFileContents(newName),
+        // Local worktree oids usually aren't in the object db; read the file.
+        isLocal && fileDiff.type !== "deleted"
+          ? loadWorktreeFileContents(newName)
+          : newObjectId && !isZeroOid(newObjectId)
+            ? loadBlobFileContents(newObjectId, newName)
+            : loadWorktreeFileContents(newName),
       ]);
       return { oldFile, newFile };
     },
-    [usesLocalStore, org, repo, number],
+    [usesLocalStore, isLocal, org, repo, number],
+  );
+
+  // Only local diffs edit the worktree. Pure renames have no rows to edit.
+  const canEditFile = useCallback(
+    (fileDiff: FileDiffMetadata): boolean =>
+      isLocal && fileDiff.type !== "deleted" && fileDiff.type !== "rename-pure",
+    [isLocal],
+  );
+
+  const startEditingFile = useCallback((itemId: string) => {
+    const viewer = viewerRef.current;
+    const item = viewer?.getItem(itemId);
+    if (!viewer || !item) return;
+    editDecisionRef.current = "reject";
+    editingItemIdRef.current = itemId;
+    setEditingItemId(itemId);
+    // Pierre won't hydrate new files, so they'd stay partial and uneditable.
+    // Their patch has every line, so mark them complete; a new cacheKey makes
+    // Pierre pick up the copy.
+    const fileDiff =
+      item.type === "diff" && item.fileDiff.type === "new" && item.fileDiff.isPartial
+        ? {
+            ...item.fileDiff,
+            isPartial: false,
+            cacheKey: `${item.fileDiff.cacheKey ?? item.id}:complete`,
+          }
+        : undefined;
+    // updateItem ignores same-version updates.
+    viewer.updateItem({
+      ...item,
+      ...(fileDiff ? { fileDiff } : {}),
+      edit: true,
+      version: (item.version ?? 0) + 1,
+    });
+  }, []);
+
+  const finishEditingFile = useCallback((itemId: string, decision: "accept" | "reject") => {
+    editDecisionRef.current = decision;
+    const viewer = viewerRef.current;
+    const item = viewer?.getItem(itemId);
+    if (viewer && item) {
+      // Ends the session; handleItemEditComplete applies the decision.
+      viewer.updateItem({ ...item, edit: false, version: (item.version ?? 0) + 1 });
+    } else {
+      editingItemIdRef.current = null;
+      setEditingItemId(null);
+    }
+  }, []);
+
+  const saveWorktreeFile = useCallback(async (path: string, contents: string) => {
+    try {
+      await apiFetch("/api/worktree-file", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, contents }),
+      });
+    } catch (err) {
+      console.error(`Failed to save ${path}:`, err);
+      // Disk still has the old content; re-sync the view.
+      reloadDiffRef.current?.();
+    }
+  }, []);
+
+  const handleItemEditComplete = useCallback<
+    CodeViewItemEditCompleteHandler<AnnotationMeta, undefined>
+  >(
+    (event, item) => {
+      if (editingItemIdRef.current === item.id) {
+        editingItemIdRef.current = null;
+        setEditingItemId(null);
+      }
+      const decision = editDecisionRef.current;
+      editDecisionRef.current = "reject";
+      const hadPendingReload = pendingDiffReloadRef.current;
+      pendingDiffReloadRef.current = false;
+      // Saving triggers a reload itself; only reject needs an explicit one.
+      const reject = () => {
+        if (hadPendingReload) reloadDiffRef.current?.();
+        return "reject" as const;
+      };
+      if (decision !== "accept" || item.type !== "diff") return reject();
+      const completed = event as FileDiffEditCompleteEvent<AnnotationMeta, undefined>;
+      if (!completed.newFile) return reject();
+      // New cacheKey so the render cache doesn't serve the old diff.
+      completed.fileDiff.cacheKey = `edited:${item.id}:${Date.now()}`;
+      void saveWorktreeFile(completed.fileDiff.name, completed.newFile.contents);
+      return "accept";
+    },
+    [saveWorktreeFile],
+  );
+
+  const createEditor = useCallback<EditorFactory<AnnotationMeta, undefined>>(
+    (editorType, options, editStateKey) => new Editor(editorType, options, editStateKey),
+    [],
   );
 
   const codeViewOptions = useMemo(
@@ -1276,6 +1395,27 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const renderHeaderMetadata = useCallback(
     (item: CodeViewItem<AnnotationMeta>) => {
       if (item.type !== "diff" || !item.fileDiff) return null;
+      if (editingItemId === item.id) {
+        return (
+          <div
+            className="flex items-center gap-1.5"
+            data-diff-file={item.fileDiff.name}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => finishEditingFile(item.id, "reject")}
+            >
+              Cancel
+            </Button>
+            <Button type="button" size="xs" onClick={() => finishEditingFile(item.id, "accept")}>
+              Save
+            </Button>
+          </div>
+        );
+      }
       const sig = fileSignatures.get(item.fileDiff.name);
       const isReviewed = sig != null && reviewed.map.get(item.fileDiff.name) === sig;
       return (
@@ -1309,11 +1449,25 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           <FileActionsMenu
             path={item.fileDiff.name}
             diffText={filePatchSections.get(item.fileDiff.name)}
+            onEdit={
+              editingItemId == null && canEditFile(item.fileDiff)
+                ? () => startEditingFile(item.id)
+                : undefined
+            }
           />
         </div>
       );
     },
-    [fileSignatures, reviewed, toggleReviewed, filePatchSections],
+    [
+      fileSignatures,
+      reviewed,
+      toggleReviewed,
+      filePatchSections,
+      editingItemId,
+      canEditFile,
+      startEditingFile,
+      finishEditingFile,
+    ],
   );
 
   if (loading) {
@@ -1485,18 +1639,21 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               </EmptyContent>
             </Empty>
           ) : (
-            <CodeView<AnnotationMeta>
-              key={codeViewKey}
-              ref={viewerRef}
-              initialItems={initialItems}
-              selectedLines={selectedLines}
-              onSelectedLinesChange={setSelectedLines}
-              style={codeViewStyle}
-              options={codeViewOptions}
-              renderAnnotation={renderAnnotation}
-              renderHeaderPrefix={renderHeaderPrefix}
-              renderHeaderMetadata={renderHeaderMetadata}
-            />
+            <EditProvider createEditor={createEditor}>
+              <CodeView<AnnotationMeta>
+                key={codeViewKey}
+                ref={viewerRef}
+                initialItems={initialItems}
+                selectedLines={selectedLines}
+                onSelectedLinesChange={setSelectedLines}
+                style={codeViewStyle}
+                options={codeViewOptions}
+                renderAnnotation={renderAnnotation}
+                renderHeaderPrefix={renderHeaderPrefix}
+                renderHeaderMetadata={renderHeaderMetadata}
+                onItemEditComplete={handleItemEditComplete}
+              />
+            </EditProvider>
           )}
         </div>
       </div>
