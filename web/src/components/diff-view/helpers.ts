@@ -4,8 +4,6 @@ import type {
   DiffOrderBy,
   DiffOrderByOption,
   DiffOrderDir,
-  DiffStyle,
-  DiffThemeId,
   DiffThemeOption,
   ColorSchemeOption,
   ReviewThread,
@@ -45,27 +43,11 @@ export const colorSchemeOptions: readonly ColorSchemeOption[] = [
   { id: "dark", label: "Dark", icon: IconMoon },
 ];
 
-export function isDiffThemeId(value: unknown): value is DiffThemeId {
-  return typeof value === "string" && diffThemeOptions.some((option) => option.id === value);
-}
-
-export function isDiffStyle(value: unknown): value is DiffStyle {
-  return value === "split" || value === "unified";
-}
-
 export const diffOrderByOptions: readonly DiffOrderByOption[] = [
   { id: "path", label: "Path" },
   { id: "changes", label: "Changes" },
   { id: "type", label: "File type" },
 ];
-
-export function isDiffOrderBy(value: unknown): value is DiffOrderBy {
-  return value === "path" || value === "changes" || value === "type";
-}
-
-export function isDiffOrderDir(value: unknown): value is DiffOrderDir {
-  return value === "asc" || value === "desc";
-}
 
 function fileChangeCount(file: FileDiffMetadata): number {
   let count = 0;
@@ -114,12 +96,6 @@ export function threadEndLine(thread: ReviewThread): number {
 
 export function threadEndSide(thread: ReviewThread): "additions" | "deletions" {
   return thread.endSide ?? thread.side;
-}
-
-export function threadRangeLabel(thread: ReviewThread): string | null {
-  const endLine = threadEndLine(thread);
-  if (endLine === thread.line && threadEndSide(thread) === thread.side) return null;
-  return `Lines ${thread.line}-${endLine}`;
 }
 
 export function threadLineLabel(thread: ReviewThread): string {
@@ -171,52 +147,16 @@ export function prDiffPathFromUrl(prUrl: string): string | undefined {
   }
 }
 
-// Do NOT decode C-style escapes (\NNN, \t, …) in quoted paths — the patch parser leaves them as-is.
-function stripDiffPathPrefix(value: string): string {
-  let path = value;
-  const tab = path.indexOf("\t");
-  if (tab !== -1) path = path.slice(0, tab);
-  path = path.trim();
-  if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) {
-    path = path.slice(1, -1);
-  }
-  if (path.startsWith("a/") || path.startsWith("b/")) path = path.slice(2);
-  return path;
-}
-
-function patchTargetPath(block: readonly string[]): string | null {
-  let fromPath: string | null = null;
-  for (const line of block) {
-    if (line.startsWith("+++ ")) {
-      const path = stripDiffPathPrefix(line.slice(4));
-      if (path !== "" && path !== "/dev/null") return path;
-    } else if (line.startsWith("rename to ")) {
-      return stripDiffPathPrefix(line.slice(10));
-    } else if (line.startsWith("--- ") && fromPath == null) {
-      const path = stripDiffPathPrefix(line.slice(4));
-      if (path !== "" && path !== "/dev/null") fromPath = path;
-    }
-  }
-  if (fromPath != null) return fromPath;
-  const match = / b\/(.+)$/.exec(block[0]?.slice("diff --git ".length) ?? "");
-  return match ? match[1].trim() : null;
-}
-
-// Byte-for-byte slice per diff --git block; preserves exact git output for copy-diff.
-export function splitPatchByFile(patch: string | null): Map<string, string> {
-  const sections = new Map<string, string>();
-  if (!patch) return sections;
-  const starts: number[] = [];
-  let offset = 0;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("diff --git ")) starts.push(offset);
-    offset += line.length + 1; // + 1 for the "\n" consumed by split
-  }
-  for (let i = 0; i < starts.length; i++) {
-    const end = i + 1 < starts.length ? starts[i + 1] : patch.length;
-    const section = patch.slice(starts[i], end);
-    const name = patchTargetPath(section.split("\n"));
-    if (name != null) sections.set(name, section);
-  }
-  return sections;
+// Byte-for-byte `diff --git` blocks for copy-diff. parsePatchFiles returns one
+// file per block in patch order; on any mismatch return nothing rather than
+// pair a file with the wrong block.
+export function splitPatchByFile(
+  patch: string | null,
+  files: readonly FileDiffMetadata[],
+): Map<string, string> {
+  const blocks = (patch ?? "")
+    .split(/^(?=diff --git )/m)
+    .filter((b) => b.startsWith("diff --git "));
+  if (blocks.length !== files.length) return new Map();
+  return new Map(files.map((file, i) => [file.name, blocks[i]]));
 }

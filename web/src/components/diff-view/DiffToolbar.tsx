@@ -50,12 +50,23 @@ function GitHubIcon(props: SVGProps<SVGSVGElement>) {
   return <SimpleBrandIcon icon={siGithub} {...props} />;
 }
 
+// Menu entries in display order; a missing href hides the entry.
+export type ToolbarLink = [href: string | undefined, kind: keyof typeof linkMeta];
+const linkMeta = {
+  branch: [IconGitBranch, "View branch diff"],
+  local: [IconFileDiff, "View local diff"],
+  pr: [IconGitPullRequest, "View PR diff"],
+  "github-pr": [GitHubIcon, "Open GitHub Pull request"],
+  "github-repo": [GitHubIcon, "Open GitHub repository"],
+} as const;
+
+const chipClass =
+  "inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
+const chipButtonClass = `${chipClass} cursor-pointer outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-neutral-700`;
+
 function BranchChip({ label, title }: { label: string; title: string }) {
   return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-      title={title}
-    >
+    <span className={chipClass} title={title}>
       <IconGitBranch size={12} />
       <span className="truncate">{label}</span>
     </span>
@@ -95,7 +106,7 @@ function BaseBranchSwitcher({ baseRef, includeDirty }: { baseRef: string; includ
         render={
           <button
             type="button"
-            className="inline-flex max-w-[12rem] shrink-0 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-ring dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+            className={`${chipButtonClass} max-w-[12rem]`}
             title={`Base: ${baseRef}. Click to switch.`}
             aria-label={`Base branch ${baseRef}. Click to switch.`}
           >
@@ -135,32 +146,13 @@ function BaseBranchSwitcher({ baseRef, includeDirty }: { baseRef: string; includ
   );
 }
 
-function PrStat({
-  value,
-  label,
-  valueClassName,
-}: {
-  value: string;
-  label: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="rounded-md bg-muted px-2 py-1.5">
-      <div className={`font-medium${valueClassName ? ` ${valueClassName}` : ""}`}>{value}</div>
-      <div className="text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
 function ToolbarIconButton({
   label,
-  tooltip,
   onClick,
   pressed,
   children,
 }: {
   label: string;
-  tooltip: string;
   onClick: () => void;
   pressed?: boolean;
   children: ReactNode;
@@ -182,7 +174,7 @@ function ToolbarIconButton({
           </Button>
         }
       />
-      <TooltipContent>{tooltip}</TooltipContent>
+      <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
 }
@@ -198,31 +190,12 @@ function pullRequestTitle(prUrl: string) {
   return { repo: prUrl, pullRequest: "" };
 }
 
-function pullRequestBranchLabel(info: PullRequestInfo, side: "base" | "head") {
-  const { label, ref, repo } =
-    side === "base"
-      ? { label: info.baseLabel, ref: info.baseRef, repo: info.baseRepo }
-      : { label: info.headLabel, ref: info.headRef, repo: info.headRepo };
-  if (label.trim() !== "") return label.trim();
-  if (repo.trim() !== "" && ref.trim() !== "") return `${repo.trim()}:${ref.trim()}`;
-  return ref.trim();
-}
-
-function pullRequestStatus(info: PullRequestInfo) {
-  if (info.merged) return "Merged";
-  if (info.state.toLowerCase() === "closed") return "Closed";
-  if (info.draft) return "Draft";
-  return "Open";
-}
-
-function pullRequestStatusClass(info: PullRequestInfo) {
-  const status = pullRequestStatus(info);
-  if (status === "Open") return "bg-[#1f883d] text-white";
-  if (status === "Merged") return "bg-[#8250df] text-white";
-  if (status === "Draft")
-    return "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200";
-  return "bg-[#cf222e] text-white";
-}
+const pullRequestStatusClass: Record<PullRequestInfo["status"], string> = {
+  Open: "bg-[#1f883d] text-white",
+  Merged: "bg-[#8250df] text-white",
+  Draft: "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200",
+  Closed: "bg-[#cf222e] text-white",
+};
 
 function formatPullRequestDate(value: string) {
   if (value.trim() === "") return "";
@@ -235,7 +208,7 @@ function formatPullRequestDate(value: string) {
   }).format(date);
 }
 
-const pullRequestCountFormat = new Intl.NumberFormat();
+const count = new Intl.NumberFormat();
 
 export function DiffToolbar({
   allCollapsed,
@@ -243,23 +216,17 @@ export function DiffToolbar({
   isLocal,
   baseRef,
   includeDirty = false,
-  onSettingsOpenChange,
   onSidebarToggle,
   onSubmitPendingComments,
   onToggleAllCollapsed,
   onExport,
   exporting,
   onMenuOpen,
-  githubRepoUrl,
-  githubPrUrl,
-  prDiffPath,
-  branchDiffPath,
-  localDiffPath,
+  links,
   pendingCommentCount,
   pullRequestInfo,
   prUrl,
   settings,
-  settingsOpen,
   sidebarOpen,
   submittingPendingComments,
 }: {
@@ -268,40 +235,30 @@ export function DiffToolbar({
   isLocal: boolean;
   baseRef?: string;
   includeDirty?: boolean;
-  onSettingsOpenChange: (open: boolean) => void;
   onSidebarToggle: () => void;
   onSubmitPendingComments: () => void;
   onToggleAllCollapsed: () => void;
   onExport: () => void;
   exporting: boolean;
   onMenuOpen: () => void;
-  githubRepoUrl?: string;
-  githubPrUrl?: string;
-  prDiffPath?: string;
-  branchDiffPath?: string;
-  localDiffPath?: string;
+  links: readonly ToolbarLink[];
   pendingCommentCount: number;
   pullRequestInfo: PullRequestInfo | null;
   prUrl: string;
   settings: DiffSettingsProps;
-  settingsOpen: boolean;
   sidebarOpen: boolean;
   submittingPendingComments: boolean;
 }) {
   const remoteTitle = pullRequestTitle(prUrl);
-  const baseBranch = pullRequestInfo ? pullRequestBranchLabel(pullRequestInfo, "base") : "";
-  const headBranch = pullRequestInfo ? pullRequestBranchLabel(pullRequestInfo, "head") : "";
+  const baseBranch = pullRequestInfo?.baseBranch ?? "";
+  const headBranch = pullRequestInfo?.headBranch ?? "";
   const createdAt = pullRequestInfo ? formatPullRequestDate(pullRequestInfo.createdAt) : "";
   const updatedAt = pullRequestInfo ? formatPullRequestDate(pullRequestInfo.updatedAt) : "";
+  const submitLabel = `Submit ${pendingCommentCount} pending ${pendingCommentCount === 1 ? "comment" : "comments"}`;
 
   return (
     <header className="flex shrink-0 flex-nowrap items-center gap-2.5 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-900">
-      <ToolbarIconButton
-        label="Show file tree"
-        tooltip="Show file tree"
-        onClick={onSidebarToggle}
-        pressed={sidebarOpen}
-      >
+      <ToolbarIconButton label="Show file tree" onClick={onSidebarToggle} pressed={sidebarOpen}>
         <IconLayoutSidebar size={14} />
       </ToolbarIconButton>
 
@@ -344,7 +301,7 @@ export function DiffToolbar({
                   render={
                     <button
                       type="button"
-                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-600 outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-ring dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+                      className={chipButtonClass}
                       aria-label={`Pull request ${remoteTitle.pullRequest} overview`}
                       title={`Pull request ${remoteTitle.pullRequest}`}
                     >
@@ -373,9 +330,9 @@ export function DiffToolbar({
                       <PopoverHeader className="gap-2">
                         <div className="flex items-center gap-2">
                           <span
-                            className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${pullRequestStatusClass(pullRequestInfo)}`}
+                            className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${pullRequestStatusClass[pullRequestInfo.status]}`}
                           >
-                            {pullRequestStatus(pullRequestInfo)}
+                            {pullRequestInfo.status}
                           </span>
                           {pullRequestInfo.author !== "" && (
                             <span className="min-w-0 truncate text-[12px] text-muted-foreground">
@@ -395,24 +352,27 @@ export function DiffToolbar({
                         )}
                       </PopoverHeader>
                       <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                        <PrStat
-                          value={`+${pullRequestCountFormat.format(pullRequestInfo.additions)}`}
-                          label="Added"
-                          valueClassName="text-green-600 dark:text-green-400"
-                        />
-                        <PrStat
-                          value={`-${pullRequestCountFormat.format(pullRequestInfo.deletions)}`}
-                          label="Deleted"
-                          valueClassName="text-red-600 dark:text-red-400"
-                        />
-                        <PrStat
-                          value={pullRequestCountFormat.format(pullRequestInfo.changedFiles)}
-                          label="Files"
-                        />
-                        <PrStat
-                          value={pullRequestCountFormat.format(pullRequestInfo.commits)}
-                          label="Commits"
-                        />
+                        {(
+                          [
+                            [
+                              `+${count.format(pullRequestInfo.additions)}`,
+                              "Added",
+                              "text-green-600 dark:text-green-400",
+                            ],
+                            [
+                              `-${count.format(pullRequestInfo.deletions)}`,
+                              "Deleted",
+                              "text-red-600 dark:text-red-400",
+                            ],
+                            [count.format(pullRequestInfo.changedFiles), "Files", ""],
+                            [count.format(pullRequestInfo.commits), "Commits", ""],
+                          ] as const
+                        ).map(([value, label, color]) => (
+                          <div key={label} className="rounded-md bg-muted px-2 py-1.5">
+                            <div className={`font-medium ${color}`}>{value}</div>
+                            <div className="text-muted-foreground">{label}</div>
+                          </div>
+                        ))}
                       </div>
                     </>
                   ) : (
@@ -444,40 +404,24 @@ export function DiffToolbar({
             align="start"
             className="[&_[data-slot=dropdown-menu-item]]:text-[12px]"
           >
-            {branchDiffPath != null && (
-              <DropdownMenuItem render={<Link to={branchDiffPath} />}>
-                <IconGitBranch />
-                View branch diff
-              </DropdownMenuItem>
-            )}
-            {localDiffPath != null && (
-              <DropdownMenuItem render={<Link to={localDiffPath} />}>
-                <IconFileDiff />
-                View local diff
-              </DropdownMenuItem>
-            )}
-            {prDiffPath != null && (
-              <DropdownMenuItem render={<Link to={prDiffPath} />}>
-                <IconGitPullRequest />
-                View PR diff
-              </DropdownMenuItem>
-            )}
-            {githubPrUrl != null && githubPrUrl !== "" && (
-              <DropdownMenuItem
-                render={<a href={githubPrUrl} target="_blank" rel="noopener noreferrer" />}
-              >
-                <GitHubIcon />
-                Open GitHub Pull request
-              </DropdownMenuItem>
-            )}
-            {githubRepoUrl != null && githubRepoUrl !== "" && (
-              <DropdownMenuItem
-                render={<a href={githubRepoUrl} target="_blank" rel="noopener noreferrer" />}
-              >
-                <GitHubIcon />
-                Open GitHub repository
-              </DropdownMenuItem>
-            )}
+            {links.map(([href, kind]) => {
+              if (!href) return null;
+              const [Icon, label] = linkMeta[kind];
+              return href.startsWith("/") ? (
+                <DropdownMenuItem key={label} render={<Link to={href} />}>
+                  <Icon />
+                  {label}
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  key={label}
+                  render={<a href={href} target="_blank" rel="noopener noreferrer" />}
+                >
+                  <Icon />
+                  {label}
+                </DropdownMenuItem>
+              );
+            })}
             <DropdownMenuItem onClick={onExport} disabled={exporting}>
               <IconFileExport />
               {exporting ? "Exporting…" : "Export as HTML"}
@@ -494,8 +438,8 @@ export function DiffToolbar({
             className="h-7 border-[#2a9147] bg-[#238636] px-2 text-xs text-white hover:bg-[#2ea043] focus-visible:border-[#2a9147] focus-visible:ring-[#2ea043]/35"
             onClick={onSubmitPendingComments}
             disabled={submittingPendingComments}
-            aria-label={`Submit ${pendingCommentCount} pending ${pendingCommentCount === 1 ? "comment" : "comments"}`}
-            title={`Submit ${pendingCommentCount} pending ${pendingCommentCount === 1 ? "comment" : "comments"}`}
+            aria-label={submitLabel}
+            title={submitLabel}
           >
             <IconSend size={13} />
             <span>{submittingPendingComments ? "Submitting" : "Submit comments"}</span>
@@ -507,7 +451,6 @@ export function DiffToolbar({
 
         <ToolbarIconButton
           label={allCollapsed ? "Expand all files" : "Collapse all files"}
-          tooltip={allCollapsed ? "Expand all files" : "Collapse all files"}
           onClick={onToggleAllCollapsed}
           pressed={allCollapsed}
         >
@@ -515,11 +458,7 @@ export function DiffToolbar({
         </ToolbarIconButton>
 
         <Suspense fallback={null}>
-          <DiffSettingsPopover
-            {...settings}
-            open={settingsOpen}
-            onOpenChange={onSettingsOpenChange}
-          />
+          <DiffSettingsPopover {...settings} />
         </Suspense>
       </div>
     </header>

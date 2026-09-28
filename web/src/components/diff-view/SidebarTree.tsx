@@ -14,14 +14,13 @@ import {
   IconMessageCircle,
   IconMessageCirclePlus,
   IconSearch,
-  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ResolvedColorScheme } from "@/lib/colorScheme";
 import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
-import { CommentAvatar } from "./CommentAvatar";
+import { CommentAvatar, DeleteThreadButton, ThreadBadges } from "./ThreadParts";
 import type { ReviewThread } from "./types";
 import { latestThreadComment, threadEndLine, threadLineLabel } from "./helpers";
 import { DiffStats } from "./DiffStats";
@@ -289,21 +288,7 @@ export function SidebarTree({
                                       {threadLineLabel(thread)}
                                     </span>
                                   </span>
-                                  {thread.status === "resolved" && (
-                                    <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
-                                      Resolved
-                                    </span>
-                                  )}
-                                  {thread.pending && (
-                                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">
-                                      Pending
-                                    </span>
-                                  )}
-                                  {thread.comments.length > 1 && (
-                                    <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
-                                      {thread.comments.length}
-                                    </span>
-                                  )}
+                                  <ThreadBadges thread={thread} />
                                 </div>
                                 <p className="text-foreground line-clamp-3 w-full break-words whitespace-pre-wrap">
                                   {latestComment?.body ?? ""}
@@ -311,21 +296,10 @@ export function SidebarTree({
                               </div>
                             </button>
                             {canDelete && (
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <button
-                                      type="button"
-                                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive my-2 mr-2 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/thread:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                      aria-label="Delete comment"
-                                      onClick={() => onDeleteComment(thread)}
-                                    >
-                                      <IconTrash size={14} />
-                                    </button>
-                                  }
-                                />
-                                <TooltipContent>Delete comment</TooltipContent>
-                              </Tooltip>
+                              <DeleteThreadButton
+                                className="my-2 mr-2 group-hover/thread:opacity-100"
+                                onClick={() => onDeleteComment(thread)}
+                              />
                             )}
                           </div>
                         );

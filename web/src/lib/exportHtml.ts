@@ -4,11 +4,13 @@ import jetbrainsMono400Url from "@fontsource/jetbrains-mono/files/jetbrains-mono
 import jetbrainsMono700Url from "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-700-normal.woff2?url";
 import interVariableUrl from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
 import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
+// Export page shell; mirrors web/src/index.css palette, keep roughly in sync.
+import shellCss from "./exportShell.css?raw";
 import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
 
 // Subset of @pierre/diffs render options that affect static rasterization; mirrors the
 // live CodeView `options` (a superset object is accepted).
-export interface ExportDiffOptions {
+interface ExportDiffOptions {
   theme: DiffsThemeNames | ThemesType;
   themeType: ThemeTypes | undefined;
   diffStyle: "split" | "unified";
@@ -109,58 +111,6 @@ function splitFragment(html: string): SplitFragment {
   return { styles, sprite, content: content.join("") };
 }
 
-// Shell CSS + design tokens; mirrors web/src/index.css palette — keep roughly in sync if that changes.
-const SHELL_CSS = `
-:root{
-  color-scheme:light;
-  --bg:#ffffff;
-  --fg:#171717;
-  --muted-fg:#737373;
-  --border:#e5e5e5;
-  --surface:#fafafa;
-}
-.dark{
-  color-scheme:dark;
-  --bg:#0a0a0a;
-  --fg:#fafafa;
-  --muted-fg:#a3a3a3;
-  --border:#262626;
-  --surface:#171717;
-}
-*{box-sizing:border-box;}
-html,body{margin:0;padding:0;}
-body{
-  background:var(--bg);
-  color:var(--fg);
-  font-family:var(--font-sans);
-  -webkit-font-smoothing:antialiased;
-}
-.export-header{
-  padding:16px 20px;
-  border-bottom:1px solid var(--border);
-  background:var(--surface);
-}
-.export-header h1{
-  margin:0;
-  font-size:15px;
-  font-weight:600;
-  line-height:1.3;
-  word-break:break-word;
-}
-.export-header p{
-  margin:4px 0 0;
-  font-size:12px;
-  color:var(--muted-fg);
-  word-break:break-word;
-}
-.export-main{
-  padding:16px 20px 48px;
-}
-.diffs-root{
-  display:block;
-}
-`.trim();
-
 // Mirrors applyConfigFontFamilies; values inherit across the shadow boundary. Note:
 // --diffs-header-font-family is left unset on purpose to match the live app's fallback.
 function fontVarsCss(codeFontFamily: string | undefined, uiFontFamily: string | undefined): string {
@@ -223,7 +173,7 @@ async function buildDocument(params: ExportDiffParams): Promise<string> {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<style>${fontFaceCss}${SHELL_CSS}${fontVarsCss(codeFontFamily, uiFontFamily)}</style>
+<style>${fontFaceCss}${shellCss.trim()}${fontVarsCss(codeFontFamily, uiFontFamily)}</style>
 </head>
 <body>
 <header class="export-header"><h1>${escapeHtml(title)}</h1>${subtitleHtml}</header>

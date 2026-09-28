@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router";
-import { Home } from "./components/Home";
+import { Home, NotFound } from "./components/Home";
 import { DiffView } from "./components/DiffView";
-import { NotFound } from "./components/NotFound";
 
 export default function App() {
   return (

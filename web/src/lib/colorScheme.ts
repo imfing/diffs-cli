@@ -1,7 +1,7 @@
 export type AppColorScheme = "dark" | "light" | "system";
 export type ResolvedColorScheme = "dark" | "light";
 
-export const colorSchemeStorageKey = "diffs-color-scheme";
+const colorSchemeStorageKey = "diffs-color-scheme";
 
 const colorSchemeQuery =
   typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null;

@@ -22,16 +22,14 @@ import {
   IconSortDescending,
   type TablerIcon,
 } from "@tabler/icons-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { isAppColorScheme } from "@/lib/colorScheme";
-import type { DiffStyle, DiffSettingsProps } from "./types";
+import type { DiffSettingsProps, DiffStyle } from "./types";
 import {
   colorSchemeOptions,
   diffOrderByOptions,
   diffThemeOptions,
   headerIconButtonClass,
-  isDiffOrderBy,
-  isDiffThemeId,
 } from "./helpers";
 
 const settingsPanelClass =
@@ -73,16 +71,14 @@ function SelectRow({
   onValueChange,
   options,
   width,
-  fallbackLabel,
   contentClassName,
   trailing,
 }: {
   label: string;
   value: string;
-  onValueChange: (value: string | null) => void;
+  onValueChange: (value: string) => void;
   options: readonly SelectRowOption[];
   width: string;
-  fallbackLabel?: string;
   contentClassName?: string;
   trailing?: ReactNode;
 }) {
@@ -90,12 +86,11 @@ function SelectRow({
     <label className={settingsRowClass}>
       <span className={settingsLabelClass}>{label}</span>
       <div className="flex items-center gap-1.5">
-        <Select value={value} onValueChange={onValueChange}>
+        <Select value={value} onValueChange={(next) => next != null && onValueChange(next)}>
           <SelectTrigger size="sm" className={`${selectTriggerClass} ${width}`}>
             <SelectValue>
               {(current) => {
-                const option = options.find((opt) => opt.id === current);
-                if (!option) return fallbackLabel ?? options[0]?.label;
+                const option = options.find((opt) => opt.id === current) ?? options[0];
                 const Icon = option.icon;
                 return (
                   <span className="flex items-center gap-2">
@@ -127,44 +122,24 @@ function SelectRow({
 }
 
 export function DiffSettingsPopover({
-  open,
-  onOpenChange,
+  settings,
+  onSettingChange,
   appColorScheme,
   onColorSchemeChange,
-  diffStyle,
-  onDiffStyleToggle,
-  orderBy,
-  orderDir,
-  onOrderByChange,
-  onOrderDirToggle,
-  diffThemeId,
-  onDiffThemeChange,
-  selectedDiffThemeLabel,
-  showBackground,
-  setShowBackground,
-  showLineNumbers,
-  setShowLineNumbers,
-  wordWrap,
-  setWordWrap,
-  collapseRemovals,
-  setCollapseRemovals,
-  hideReviewed,
-  setHideReviewed,
   onShortcutsOpen,
-}: DiffSettingsProps & {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const renderToggles = [
-    { label: "Line backgrounds", checked: showBackground, onChange: setShowBackground },
-    { label: "Line numbers", checked: showLineNumbers, onChange: setShowLineNumbers },
-    { label: "Word wrap", checked: wordWrap, onChange: setWordWrap },
-    { label: "Collapse removals", checked: collapseRemovals, onChange: setCollapseRemovals },
-  ];
+}: DiffSettingsProps) {
+  const [open, setOpen] = useState(false);
+  const { diffStyle, orderBy, orderDir } = settings;
+  const switches = [
+    ["Line backgrounds", "lineBackgrounds"],
+    ["Line numbers", "lineNumbers"],
+    ["Word wrap", "wordWrap"],
+    ["Collapse removals", "collapseRemovals"],
+  ] as const;
 
   return (
     <Tooltip>
-      <Popover open={open} onOpenChange={onOpenChange}>
+      <Popover open={open} onOpenChange={setOpen}>
         <TooltipTrigger
           render={
             <PopoverTrigger
@@ -190,8 +165,8 @@ export function DiffSettingsPopover({
               spacing={0}
               value={[diffStyle]}
               onValueChange={(groupValue) => {
-                const next = groupValue[0];
-                if (next && next !== diffStyle) onDiffStyleToggle();
+                const next = groupValue[0] as DiffStyle | undefined;
+                if (next && next !== diffStyle) onSettingChange("diffStyle", next);
               }}
               aria-label="Diff view style"
               className="w-full rounded-[8px] bg-muted/50 p-0.5 dark:bg-white/[0.04]"
@@ -213,12 +188,12 @@ export function DiffSettingsPopover({
             </ToggleGroup>
             <Separator className="my-1 opacity-60" />
             <div className={settingsGroupClass}>
-              {renderToggles.map((toggle) => (
+              {switches.map(([label, name]) => (
                 <SwitchRow
-                  key={toggle.label}
-                  label={toggle.label}
-                  checked={toggle.checked}
-                  onCheckedChange={toggle.onChange}
+                  key={name}
+                  label={label}
+                  checked={settings[name]}
+                  onCheckedChange={(value) => onSettingChange(name, value)}
                 />
               ))}
             </div>
@@ -227,9 +202,7 @@ export function DiffSettingsPopover({
               <SelectRow
                 label="Order by"
                 value={orderBy}
-                onValueChange={(value) => {
-                  if (isDiffOrderBy(value)) onOrderByChange(value);
-                }}
+                onValueChange={(value) => onSettingChange("orderBy", value as typeof orderBy)}
                 options={diffOrderByOptions}
                 width="w-[112px]"
                 trailing={
@@ -241,7 +214,9 @@ export function DiffSettingsPopover({
                           variant="outline"
                           size="icon-sm"
                           className="size-7"
-                          onClick={onOrderDirToggle}
+                          onClick={() =>
+                            onSettingChange("orderDir", orderDir === "asc" ? "desc" : "asc")
+                          }
                           aria-label={orderDir === "asc" ? "Sort descending" : "Sort ascending"}
                         >
                           {orderDir === "asc" ? (
@@ -260,8 +235,8 @@ export function DiffSettingsPopover({
               />
               <SwitchRow
                 label="Hide reviewed"
-                checked={hideReviewed}
-                onCheckedChange={setHideReviewed}
+                checked={settings.hideReviewed}
+                onCheckedChange={(value) => onSettingChange("hideReviewed", value)}
               />
             </div>
             <Separator className="my-1 opacity-60" />
@@ -277,13 +252,12 @@ export function DiffSettingsPopover({
               />
               <SelectRow
                 label="Diff theme"
-                value={diffThemeId}
-                onValueChange={(value) => {
-                  if (isDiffThemeId(value)) onDiffThemeChange(value);
-                }}
+                value={settings.diffTheme}
+                onValueChange={(value) =>
+                  onSettingChange("diffTheme", value as typeof settings.diffTheme)
+                }
                 options={diffThemeOptions}
                 width="w-[140px]"
-                fallbackLabel={selectedDiffThemeLabel}
                 contentClassName="max-h-[260px]"
               />
             </div>
@@ -291,7 +265,7 @@ export function DiffSettingsPopover({
             <button
               type="button"
               onClick={() => {
-                onOpenChange(false);
+                setOpen(false);
                 onShortcutsOpen();
               }}
               className={`${settingsRowClass} w-full cursor-pointer transition-colors hover:bg-muted/60 dark:hover:bg-white/[0.04]`}

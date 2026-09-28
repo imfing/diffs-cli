@@ -28,9 +28,8 @@ pub struct RemoteRepo {
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestInfo {
     pub title: String,
-    pub state: String,
-    pub draft: bool,
-    pub merged: bool,
+    /// One of "Open", "Draft", "Merged", "Closed".
+    pub status: String,
     pub author: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -38,12 +37,8 @@ pub struct PullRequestInfo {
     pub deletions: i64,
     pub changed_files: i64,
     pub commits: i64,
-    pub head_ref: String,
-    pub head_label: String,
-    pub head_repo: String,
-    pub base_ref: String,
-    pub base_label: String,
-    pub base_repo: String,
+    pub base_branch: String,
+    pub head_branch: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -359,9 +354,7 @@ pub async fn pull_request_info(
     let response = fetch_pull(github_host, org, repo, number).await?;
     Ok(PullRequestInfo {
         title: response.title,
-        state: response.state,
-        draft: response.draft,
-        merged: response.merged,
+        status: pull_status(&response.state, response.draft, response.merged).to_string(),
         author: response.user.map(|user| user.login).unwrap_or_default(),
         created_at: response.created_at,
         updated_at: response.updated_at,
@@ -369,21 +362,38 @@ pub async fn pull_request_info(
         deletions: response.deletions,
         changed_files: response.changed_files,
         commits: response.commits,
-        head_ref: response.head.ref_name,
-        head_label: response.head.label,
-        head_repo: response
-            .head
-            .repo
-            .map(|repo| repo.full_name)
-            .unwrap_or_default(),
-        base_ref: response.base.ref_name,
-        base_label: response.base.label,
-        base_repo: response
-            .base
-            .repo
-            .map(|repo| repo.full_name)
-            .unwrap_or_default(),
+        base_branch: branch_label(&response.base),
+        head_branch: branch_label(&response.head),
     })
+}
+
+fn pull_status(state: &str, draft: bool, merged: bool) -> &'static str {
+    if merged {
+        "Merged"
+    } else if state.eq_ignore_ascii_case("closed") {
+        "Closed"
+    } else if draft {
+        "Draft"
+    } else {
+        "Open"
+    }
+}
+
+/// GitHub's `owner:branch` label, else `repo:ref`, else the bare ref.
+fn branch_label(branch: &PullRef) -> String {
+    let label = branch.label.trim();
+    let ref_name = branch.ref_name.trim();
+    let repo = branch
+        .repo
+        .as_ref()
+        .map_or("", |repo| repo.full_name.trim());
+    if !label.is_empty() {
+        label.to_string()
+    } else if !repo.is_empty() && !ref_name.is_empty() {
+        format!("{repo}:{ref_name}")
+    } else {
+        ref_name.to_string()
+    }
 }
 
 fn github_side(side: &str) -> &str {
@@ -1036,6 +1046,35 @@ mod tests {
                 ("org".to_string(), "repo".to_string())
             );
         }
+    }
+
+    #[test]
+    fn pull_status_prefers_merged_then_closed_then_draft() {
+        assert_eq!(pull_status("closed", false, true), "Merged");
+        assert_eq!(pull_status("closed", true, false), "Closed");
+        assert_eq!(pull_status("open", true, false), "Draft");
+        assert_eq!(pull_status("open", false, false), "Open");
+    }
+
+    #[test]
+    fn branch_label_falls_back_to_repo_and_ref() {
+        let branch = |label: &str, repo: Option<&str>, ref_name: &str| PullRef {
+            ref_name: ref_name.into(),
+            label: label.into(),
+            repo: repo.map(|name| RepoName {
+                full_name: name.into(),
+            }),
+            sha: String::new(),
+        };
+        assert_eq!(
+            branch_label(&branch("me:feat", Some("me/x"), "feat")),
+            "me:feat"
+        );
+        assert_eq!(
+            branch_label(&branch(" ", Some("me/x"), "feat")),
+            "me/x:feat"
+        );
+        assert_eq!(branch_label(&branch("", None, "feat")), "feat");
     }
 
     #[test]

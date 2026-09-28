@@ -58,7 +58,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffStatusScreen } from "./diff-view/DiffStatusScreen";
-import { DiffToolbar } from "./diff-view/DiffToolbar";
+import { DiffToolbar, type ToolbarLink } from "./diff-view/DiffToolbar";
 import { FileActionsMenu } from "./diff-view/FileActionsMenu";
 import { ShortcutsDialog } from "./diff-view/ShortcutsDialog";
 import { SidebarTree } from "./diff-view/SidebarTree";
@@ -67,11 +67,6 @@ import type {
   AppConfig,
   CodeViewLineSelection,
   CommentTarget,
-  DiffOrderBy,
-  DiffOrderDir,
-  DiffSettingsProps,
-  DiffStyle,
-  DiffThemeId,
   PendingCommentDraft,
   PatchLoadState,
   PullRequestInfo,
@@ -79,10 +74,6 @@ import type {
 } from "./diff-view/types";
 import {
   diffThemeOptions,
-  isDiffOrderBy,
-  isDiffOrderDir,
-  isDiffStyle,
-  isDiffThemeId,
   localRepoTitle,
   prDiffPathFromUrl,
   selectedRangeEndLine,
@@ -93,8 +84,8 @@ import {
   threadEndLine,
   threadEndSide,
 } from "./diff-view/helpers";
-import { decodeStoredBool, usePersistentState } from "./diff-view/usePersistentState";
-import { apiFetch } from "@/lib/api";
+import { useSettings, type SetSetting } from "./diff-view/useSettings";
+import { apiFetch, apiSend } from "@/lib/api";
 import { DIFF_SURFACE_FONT_SIZE } from "@/lib/diffTypography";
 import { exportDiffToHtml } from "@/lib/exportHtml";
 import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
@@ -108,19 +99,17 @@ const codeViewStyle = {
   "--diffs-font-size": DIFF_SURFACE_FONT_SIZE,
 } as CSSProperties;
 
-const STORAGE_DIFF_THEME = "diff-theme";
-const STORAGE_DIFF_STYLE = "diffs-diff-style";
-const STORAGE_ORDER_BY = "diffs-order-by";
-const STORAGE_ORDER_DIR = "diffs-order-dir";
-const STORAGE_WORD_WRAP = "diffs-word-wrap";
-const STORAGE_LINE_NUMBERS = "diffs-line-numbers";
-const STORAGE_LINE_BACKGROUNDS = "diffs-line-backgrounds";
-const STORAGE_COLLAPSE_REMOVALS = "diffs-collapse-removals";
-const STORAGE_HIDE_REVIEWED = "diffs-hide-reviewed";
-
 // Window after a programmatic scroll during which the cursor isn't re-synced.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
+
+type Viewer = CodeViewHandle<AnnotationMeta, undefined>;
+type Item = CodeViewItem<AnnotationMeta>;
+
+// updateItem ignores same-version updates, so every change bumps the version.
+function patchItem(viewer: Viewer, item: Item, patch: Partial<Item>) {
+  viewer.updateItem({ ...item, ...patch, version: (item.version ?? 0) + 1 } as Item);
+}
 
 // FNV-1a hash, folded to base36.
 function fnv1a(build: (feed: (s: string) => void) => void): string {
@@ -286,38 +275,19 @@ function createPendingThread(target: CommentTarget, body: string): ReviewThread 
 // Local/branch diffs use an all-zeros object id for the working-tree side
 // (git diffs against the workdir, not a blob), so that side has to be read
 // from disk instead of the object database.
-function isZeroOid(oid: string): boolean {
-  return /^0+$/.test(oid);
+function isZeroOid(oid: string | undefined): boolean {
+  return !oid || /^0+$/.test(oid);
 }
 
-// Full-file hydration for `loadDiffFiles`: fetches one side of a PR file from
-// its GitHub repo/sha via the server-side proxy (fork-aware; see
-// gh::pull_request_file).
-async function loadPullRequestFileContents(
-  org: string,
-  repo: string,
-  number: string,
-  path: string,
-  side: "old" | "new",
-): Promise<FileContents> {
-  const url = `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}/file?path=${encodeURIComponent(path)}&side=${side}`;
-  const contents = await apiFetch<string>(url);
-  return { name: path, contents };
+// Full-file hydration for `loadDiffFiles`. Blobs are keyed for highlight cache
+// reuse; PR files go through the fork-aware server proxy (gh::pull_request_file).
+async function fetchFile(url: string, name: string, cacheKey?: string): Promise<FileContents> {
+  return { name, contents: await apiFetch<string>(url), cacheKey };
 }
-
-// Full-file hydration for a committed blob (local/branch diffs' non-worktree
-// side), keyed for highlight cache reuse across renders of the same blob.
-async function loadBlobFileContents(oid: string, name: string): Promise<FileContents> {
-  const contents = await apiFetch<string>(`/api/blob?oid=${encodeURIComponent(oid)}`);
-  return { name, contents, cacheKey: `blob:${oid}` };
-}
-
-// Full-file hydration for the zero-oid working-tree side of a local/branch
-// diff (uncommitted content, so there's no blob to fetch by oid).
-async function loadWorktreeFileContents(path: string): Promise<FileContents> {
-  const contents = await apiFetch<string>(`/api/blob?path=${encodeURIComponent(path)}&worktree=1`);
-  return { name: path, contents };
-}
+const fetchBlob = (oid: string, name: string) =>
+  fetchFile(`/api/blob?oid=${encodeURIComponent(oid)}`, name, `blob:${oid}`);
+const fetchWorktree = (path: string) =>
+  fetchFile(`/api/blob?${new URLSearchParams({ path, worktree: "1" })}`, path);
 
 export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch" } = {}) {
   const { org, repo, number } = useParams<{
@@ -329,51 +299,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
   const includeDirty = source === "branch" && searchParams.get("dirty") === "1";
 
-  const [diffStyle, setDiffStyle, setDiffStyleLocal] = usePersistentState<DiffStyle>(
-    STORAGE_DIFF_STYLE,
-    "split",
-    (r) => (isDiffStyle(r) ? r : null),
-  );
-  const [orderBy, setOrderBy] = usePersistentState<DiffOrderBy>(STORAGE_ORDER_BY, "path", (r) =>
-    isDiffOrderBy(r) ? r : null,
-  );
-  const [orderDir, setOrderDir] = usePersistentState<DiffOrderDir>(STORAGE_ORDER_DIR, "asc", (r) =>
-    isDiffOrderDir(r) ? r : null,
-  );
-  const [diffThemeId, setDiffThemeId, setDiffThemeLocal] = usePersistentState<DiffThemeId>(
-    STORAGE_DIFF_THEME,
-    "pierre",
-    (r) => (isDiffThemeId(r) ? r : null),
-  );
-  const [showBackground, setShowBackground, setShowBackgroundLocal] = usePersistentState(
-    STORAGE_LINE_BACKGROUNDS,
-    true,
-    decodeStoredBool,
-  );
-  const [showLineNumbers, setShowLineNumbers, setShowLineNumbersLocal] = usePersistentState(
-    STORAGE_LINE_NUMBERS,
-    true,
-    decodeStoredBool,
-  );
-  const [wordWrap, setWordWrap, setWordWrapLocal] = usePersistentState(
-    STORAGE_WORD_WRAP,
-    false,
-    decodeStoredBool,
-  );
-  const [collapseRemovals, setCollapseRemovals] = usePersistentState(
-    STORAGE_COLLAPSE_REMOVALS,
-    false,
-    decodeStoredBool,
-  );
-  const [hideReviewed, setHideReviewed] = usePersistentState(
-    STORAGE_HIDE_REVIEWED,
-    false,
-    decodeStoredBool,
-  );
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
   const [systemColorScheme, setSystemColorScheme] = useState(() => resolveColorScheme("system"));
   const [allCollapsedOverride, setAllCollapsed] = useState<boolean | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -385,7 +313,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     branchBase?: string;
   } | null>(null);
   const repoContextRequested = useRef(false);
-  const viewerRef = useRef<CodeViewHandle<AnnotationMeta, undefined> | null>(null);
+  const viewerRef = useRef<Viewer | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   // Ref copy for callbacks that shouldn't re-subscribe.
   const editingItemIdRef = useRef<string | null>(null);
@@ -408,6 +336,18 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     gitBranch: "",
     githubHost: "github.com",
   });
+  const [settings, setSetting] = useSettings(config);
+  const {
+    diffStyle,
+    orderBy,
+    orderDir,
+    diffTheme,
+    lineBackgrounds,
+    lineNumbers,
+    wordWrap,
+    collapseRemovals,
+    hideReviewed,
+  } = settings;
 
   const isLocal = source === "local";
   const isBranch = source === "branch";
@@ -420,17 +360,18 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const scrollStorageKey = `diffs-scroll:${sessionKey}`;
   const collapsedStorageKey = `diffs-collapsed:${sessionKey}`;
   const reviewedStorageKey = `diffs-reviewed:${sessionKey}`;
+  const hasPr = !usesLocalStore && !!org && !!repo && !!number;
   const prUrl =
     org && repo && number ? `https://${config.githubHost}/${org}/${repo}/pull/${number}` : "";
+  const prQuery = hasPr ? new URLSearchParams({ org, repo, number }).toString() : "";
   const commentsEndpoint = usesLocalStore
     ? "/api/comments"
-    : org && repo && number
-      ? `/api/comments?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(number)}`
+    : hasPr
+      ? `/api/comments?${prQuery}`
       : null;
-  const pullRequestInfoEndpoint =
-    !usesLocalStore && org && repo && number
-      ? `/api/pull/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(number)}`
-      : null;
+  const pullRequestInfoEndpoint = hasPr
+    ? `/api/pull/${[org, repo, number].map(encodeURIComponent).join("/")}`
+    : null;
   const baseTitle = isBranch
     ? `${baseRef || "base"} ← ${config.gitBranch.trim() || "HEAD"}`
     : isLocal
@@ -452,37 +393,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         if (ignore) return;
         applyConfigFontFamilies(nextConfig);
         setConfig(nextConfig);
-        const unset = (key: string) => localStorage.getItem(key) == null;
         if (isAppColorScheme(nextConfig.colorScheme) && storedColorScheme() == null) {
           setAppColorScheme(nextConfig.colorScheme);
-        }
-        if (isDiffThemeId(nextConfig.diffTheme) && unset(STORAGE_DIFF_THEME)) {
-          setDiffThemeLocal(nextConfig.diffTheme);
-        }
-        if (isDiffStyle(nextConfig.diffStyle) && unset(STORAGE_DIFF_STYLE)) {
-          setDiffStyleLocal(nextConfig.diffStyle);
-        }
-        if (typeof nextConfig.wordWrap === "boolean" && unset(STORAGE_WORD_WRAP)) {
-          setWordWrapLocal(nextConfig.wordWrap);
-        }
-        if (typeof nextConfig.lineNumbers === "boolean" && unset(STORAGE_LINE_NUMBERS)) {
-          setShowLineNumbersLocal(nextConfig.lineNumbers);
-        }
-        if (typeof nextConfig.lineBackgrounds === "boolean" && unset(STORAGE_LINE_BACKGROUNDS)) {
-          setShowBackgroundLocal(nextConfig.lineBackgrounds);
         }
       })
       .catch(() => {});
     return () => {
       ignore = true;
     };
-  }, [
-    setDiffStyleLocal,
-    setDiffThemeLocal,
-    setShowBackgroundLocal,
-    setShowLineNumbersLocal,
-    setWordWrapLocal,
-  ]);
+  }, []);
 
   useEffect(() => {
     document.title = pageTitle;
@@ -597,26 +516,23 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const loading = effectivePatchState.status === "loading";
   const error = effectivePatchState.status === "error" ? effectivePatchState.error : null;
 
-  const files = useMemo<FileDiffMetadata[]>(() => {
-    if (effectivePatchState.status !== "loaded" || !effectivePatchState.patch) return [];
-    const parsed = parsePatchFiles(
-      effectivePatchState.patch,
-      patchCacheKeyPrefix(effectivePatchState.patch),
-    );
-    return sortFiles(
-      parsed.flatMap((p) => p.files),
-      orderBy,
-      orderDir,
-    );
-  }, [effectivePatchState, orderBy, orderDir]);
+  const patch = effectivePatchState.status === "loaded" ? effectivePatchState.patch : null;
+  const parsedFiles = useMemo(
+    () => (patch ? parsePatchFiles(patch, patchCacheKeyPrefix(patch)).flatMap((p) => p.files) : []),
+    [patch],
+  );
+  const files = useMemo(
+    () => sortFiles(parsedFiles, orderBy, orderDir),
+    [parsedFiles, orderBy, orderDir],
+  );
   const fileSignatures = useMemo(() => {
     const map = new Map<string, string>();
     for (const f of files) if (!map.has(f.name)) map.set(f.name, fileDiffSignature(f));
     return map;
   }, [files]);
   const filePatchSections = useMemo(
-    () => splitPatchByFile(effectivePatchState.patch),
-    [effectivePatchState.patch],
+    () => splitPatchByFile(patch, parsedFiles),
+    [patch, parsedFiles],
   );
   const loadRepoContext = useCallback(() => {
     if (!usesLocalStore || repoContextRequested.current) return;
@@ -667,7 +583,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     pullRequestInfo?.endpoint === pullRequestInfoEndpoint ? pullRequestInfo.info : null;
 
   const filePaths = useMemo(() => [...new Set(visibleFiles.map((f) => f.name))], [visibleFiles]);
-  const initialItems = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
+  const initialItems = useMemo<Item[]>(() => {
     const collapsed = readCollapsedPaths(collapsedStorageKey);
     const reviewedSigs = readReviewedSignatures(reviewedStorageKey);
     return files
@@ -706,8 +622,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     return map;
   }, [files, hiddenReviewedNames]);
   const selectedDiffTheme = useMemo(
-    () => diffThemeOptions.find((option) => option.id === diffThemeId) ?? diffThemeOptions[0],
-    [diffThemeId],
+    () => diffThemeOptions.find((option) => option.id === diffTheme) ?? diffThemeOptions[0],
+    [diffTheme],
   );
   const resolvedAppColorScheme = appColorScheme === "system" ? systemColorScheme : appColorScheme;
   const workerPool = useWorkerPool();
@@ -824,11 +740,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       const item = viewer?.getItem(itemId);
       if (item == null) return;
       const nextCollapsed = !item.collapsed;
-      viewer!.updateItem({
-        ...item,
-        version: (item.version ?? 0) + 1,
-        collapsed: nextCollapsed,
-      });
+      patchItem(viewer!, item, { collapsed: nextCollapsed });
       if (item.type === "diff" && item.fileDiff) {
         const stored = readCollapsedPaths(collapsedStorageKey);
         if (nextCollapsed) stored.add(item.fileDiff.name);
@@ -847,7 +759,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     for (const item of initialItems) {
       const current = viewer.getItem(item.id);
       if (current && current.collapsed !== next) {
-        viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: next });
+        patchItem(viewer, current, { collapsed: next });
       }
       if (next && item.type === "diff" && item.fileDiff) collapsedPaths.add(item.fileDiff.name);
     }
@@ -869,9 +781,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       else map.delete(name);
       persistReviewedSignatures(reviewedStorageKey, map);
       setReviewed({ key: reviewedStorageKey, map });
-      viewer!.updateItem({
-        ...item,
-        version: (item.version ?? 0) + 1,
+      patchItem(viewer!, item, {
         collapsed: computeCollapsed(
           item.fileDiff,
           readCollapsedPaths(collapsedStorageKey),
@@ -956,17 +866,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     setAppColorScheme(value);
     persistColorScheme(value);
   }, []);
-  const handleDiffStyleToggle = useCallback(
-    () => setDiffStyle(diffStyle === "split" ? "unified" : "split"),
-    [diffStyle, setDiffStyle],
-  );
-  const handleOrderDirToggle = useCallback(
-    () => setOrderDir(orderDir === "asc" ? "desc" : "asc"),
-    [orderDir, setOrderDir],
-  );
-  const handleCollapseRemovalsChange = useCallback(
-    (value: boolean) => {
-      setCollapseRemovals(value);
+  const handleSettingChange = useCallback<SetSetting>(
+    (name, value) => {
+      setSetting(name, value);
+      if (name !== "collapseRemovals") return;
       const viewer = viewerRef.current;
       if (!viewer) return;
       const manualCollapsed = readCollapsedPaths(collapsedStorageKey);
@@ -979,14 +882,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           manualCollapsed,
           reviewed.map,
           fileSignatures.get(item.fileDiff.name),
-          value,
+          value as boolean,
         );
-        if (current.collapsed !== next) {
-          viewer.updateItem({ ...current, version: (current.version ?? 0) + 1, collapsed: next });
-        }
+        if (current.collapsed !== next) patchItem(viewer, current, { collapsed: next });
       }
     },
-    [initialItems, collapsedStorageKey, reviewed, fileSignatures, setCollapseRemovals],
+    [initialItems, collapsedStorageKey, reviewed, fileSignatures, setSetting],
   );
 
   const clearCommentTarget = useCallback(() => {
@@ -995,7 +896,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   }, []);
 
   const openCommentTarget = useCallback(
-    (range: SelectedLineRange | null, context: { item: CodeViewItem<AnnotationMeta> }) => {
+    (range: SelectedLineRange | null, context: { item: Item }) => {
       if (range == null || context.item.type !== "diff") return;
       const target = {
         itemId: context.item.id,
@@ -1024,18 +925,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         clearCommentTarget();
         return;
       }
-      apiFetch<ReviewThread>(commentsEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          path: commentTarget.path,
-          line: commentTarget.line,
-          side: commentTarget.side,
-          endLine: commentTarget.endLine,
-          endSide: commentTarget.endSide,
-          body,
-        }),
-      })
+      const { path, line, side, endLine, endSide } = commentTarget;
+      apiSend<ReviewThread>(commentsEndpoint, "POST", { path, line, side, endLine, endSide, body })
         .then((thread) => {
           setCommentThreads((prev) => [...prev.filter((t) => t.id !== thread.id), thread]);
           clearCommentTarget();
@@ -1060,11 +951,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       for (const pendingThread of pendingCommentThreads) {
         const draft = pendingThread.draft;
         if (!draft) continue;
-        const submittedThread = await apiFetch<ReviewThread>(commentsEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(draft),
-        });
+        const submittedThread = await apiSend<ReviewThread>(commentsEndpoint, "POST", draft);
         setCommentThreads((prev) => [
           ...prev.filter(
             (thread) => thread.id !== pendingThread.id && thread.id !== submittedThread.id,
@@ -1135,9 +1022,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
       if (!annotationsChanged(current.annotations, annotations)) continue;
 
-      viewer.updateItem({
-        ...current,
-        version: (current.version ?? 0) + 1,
+      patchItem(viewer, current, {
         annotations: annotations.length > 0 ? annotations : undefined,
       });
     }
@@ -1145,46 +1030,36 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
   const loadDiffFiles = useCallback(
     async (fileDiff: FileDiffMetadata): Promise<FileDiffLoadedFiles> => {
+      const oldName = fileDiff.prevName ?? fileDiff.name;
+      const newName = fileDiff.name;
       if (!usesLocalStore) {
-        if (!org || !repo || !number) throw new Error("missing pull request target");
-        const newPath = fileDiff.name;
-        if (fileDiff.type === "rename-pure") {
-          const newFile = await loadPullRequestFileContents(org, repo, number, newPath, "new");
-          return { oldFile: null, newFile };
-        }
-        const oldPath = fileDiff.prevName ?? fileDiff.name;
+        if (!hasPr) throw new Error("missing pull request target");
+        const prFile = (path: string, side: "old" | "new") =>
+          fetchFile(`${pullRequestInfoEndpoint}/file?${new URLSearchParams({ path, side })}`, path);
+        if (fileDiff.type === "rename-pure")
+          return { oldFile: null, newFile: await prFile(newName, "new") };
         const [oldFile, newFile] = await Promise.all([
-          loadPullRequestFileContents(org, repo, number, oldPath, "old"),
-          loadPullRequestFileContents(org, repo, number, newPath, "new"),
+          prFile(oldName, "old"),
+          prFile(newName, "new"),
         ]);
         return { oldFile, newFile };
       }
-
-      const oldName = fileDiff.prevName ?? fileDiff.name;
-      const newName = fileDiff.name;
-      const prevObjectId = fileDiff.prevObjectId;
-      const newObjectId = fileDiff.newObjectId;
       // Pure renames carry no `index` line (and thus no object ids); their
       // content is unchanged, so read the new path from the worktree.
-      if (fileDiff.type === "rename-pure") {
-        const newFile = await loadWorktreeFileContents(newName);
-        return { oldFile: null, newFile };
-      }
-      if (!prevObjectId || isZeroOid(prevObjectId)) {
-        throw new Error(`missing prevObjectId for ${fileDiff.name}`);
-      }
+      if (fileDiff.type === "rename-pure")
+        return { oldFile: null, newFile: await fetchWorktree(newName) };
+      const { prevObjectId, newObjectId } = fileDiff;
+      if (isZeroOid(prevObjectId)) throw new Error(`missing prevObjectId for ${fileDiff.name}`);
       const [oldFile, newFile] = await Promise.all([
-        loadBlobFileContents(prevObjectId, oldName),
+        fetchBlob(prevObjectId!, oldName),
         // Local worktree oids usually aren't in the object db; read the file.
-        isLocal && fileDiff.type !== "deleted"
-          ? loadWorktreeFileContents(newName)
-          : newObjectId && !isZeroOid(newObjectId)
-            ? loadBlobFileContents(newObjectId, newName)
-            : loadWorktreeFileContents(newName),
+        (isLocal && fileDiff.type !== "deleted") || isZeroOid(newObjectId)
+          ? fetchWorktree(newName)
+          : fetchBlob(newObjectId!, newName),
       ]);
       return { oldFile, newFile };
     },
-    [usesLocalStore, isLocal, org, repo, number],
+    [usesLocalStore, isLocal, hasPr, pullRequestInfoEndpoint],
   );
 
   // Only local diffs edit the worktree. Pure renames have no rows to edit.
@@ -1212,13 +1087,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
             cacheKey: `${item.fileDiff.cacheKey ?? item.id}:complete`,
           }
         : undefined;
-    // updateItem ignores same-version updates.
-    viewer.updateItem({
-      ...item,
-      ...(fileDiff ? { fileDiff } : {}),
-      edit: true,
-      version: (item.version ?? 0) + 1,
-    });
+    patchItem(viewer, item, { ...(fileDiff ? { fileDiff } : {}), edit: true });
   }, []);
 
   const finishEditingFile = useCallback((itemId: string, decision: "accept" | "reject") => {
@@ -1227,7 +1096,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     const item = viewer?.getItem(itemId);
     if (viewer && item) {
       // Ends the session; handleItemEditComplete applies the decision.
-      viewer.updateItem({ ...item, edit: false, version: (item.version ?? 0) + 1 });
+      patchItem(viewer, item, { edit: false });
     } else {
       editingItemIdRef.current = null;
       setEditingItemId(null);
@@ -1236,11 +1105,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
   const saveWorktreeFile = useCallback(async (path: string, contents: string) => {
     try {
-      await apiFetch("/api/worktree-file", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, contents }),
-      });
+      await apiSend("/api/worktree-file", "PUT", { path, contents });
     } catch (err) {
       console.error(`Failed to save ${path}:`, err);
       // Disk still has the old content; re-sync the view.
@@ -1291,8 +1156,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       diffStyle,
       hunkSeparators: "line-info" as const,
       stickyHeaders: true,
-      disableBackground: !showBackground,
-      disableLineNumbers: !showLineNumbers,
+      disableBackground: !lineBackgrounds,
+      disableLineNumbers: !lineNumbers,
       overflow: (wordWrap ? "wrap" : "scroll") as "wrap" | "scroll",
       enableGutterUtility: true,
       enableLineSelection: true,
@@ -1308,8 +1173,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       selectedDiffTheme.themeType,
       resolvedAppColorScheme,
       diffStyle,
-      showBackground,
-      showLineNumbers,
+      lineBackgrounds,
+      lineNumbers,
       wordWrap,
       openCommentTarget,
       loadDiffFiles,
@@ -1364,7 +1229,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   );
 
   const renderHeaderPrefix = useCallback(
-    (item: CodeViewItem<AnnotationMeta>) => {
+    (item: Item) => {
       const isCollapsed = item.collapsed ?? false;
       return (
         <Tooltip>
@@ -1393,7 +1258,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   );
 
   const renderHeaderMetadata = useCallback(
-    (item: CodeViewItem<AnnotationMeta>) => {
+    (item: Item) => {
       if (item.type !== "diff" || !item.fileDiff) return null;
       if (editingItemId === item.id) {
         return (
@@ -1470,6 +1335,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     ],
   );
 
+  const branchDiffPath =
+    isLocal && repoContext?.branchBase
+      ? `/branch?base=${encodeURIComponent(repoContext.branchBase)}`
+      : undefined;
+
   if (loading) {
     return (
       <div className="flex h-dvh items-center justify-center text-neutral-500">Loading diff...</div>
@@ -1487,23 +1357,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   }
 
   if (files.length === 0) {
-    const emptyTitle = isBranch
-      ? "No commits ahead"
+    const [emptyTitle, emptyMessage] = isBranch
+      ? ["No commits ahead", `No commits ahead of ${baseRef || "base"}.`]
       : isLocal
-        ? "No file changes yet"
-        : "No files changed";
-    const emptyMessage = isBranch
-      ? `No commits ahead of ${baseRef || "base"}.`
-      : isLocal
-        ? "The latest diffs are no longer available."
-        : "This pull request doesn't change any files.";
+        ? ["No file changes yet", "The latest diffs are no longer available."]
+        : ["No files changed", "This pull request doesn't change any files."];
     return (
       <DiffStatusScreen icon={<IconFileX />} title={emptyTitle} description={emptyMessage}>
-        {isLocal && repoContext?.branchBase ? (
-          <Link
-            to={`/branch?base=${encodeURIComponent(repoContext.branchBase)}`}
-            className={buttonVariants({ size: "sm" })}
-          >
+        {branchDiffPath ? (
+          <Link to={branchDiffPath} className={buttonVariants({ size: "sm" })}>
             View branch diff
           </Link>
         ) : !isLocal && !isBranch && prUrl !== "" ? (
@@ -1525,18 +1387,18 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     );
   }
 
-  const githubRepoUrl =
-    !usesLocalStore && org && repo
-      ? `https://${config.githubHost}/${org}/${repo}`
-      : repoContext?.repoUrl;
-  const githubPrUrl = usesLocalStore ? repoContext?.prUrl : prUrl || undefined;
-  const prDiffPath =
-    usesLocalStore && repoContext?.prUrl ? prDiffPathFromUrl(repoContext.prUrl) : undefined;
-  const branchDiffPath =
-    isLocal && repoContext?.branchBase
-      ? `/branch?base=${encodeURIComponent(repoContext.branchBase)}`
-      : undefined;
-  const localDiffPath = isBranch ? "/local" : undefined;
+  const menuLinks: ToolbarLink[] = [
+    [branchDiffPath, "branch"],
+    [isBranch ? "/local" : undefined, "local"],
+    [usesLocalStore && repoContext?.prUrl ? prDiffPathFromUrl(repoContext.prUrl) : undefined, "pr"],
+    [usesLocalStore ? repoContext?.prUrl : prUrl, "github-pr"],
+    [
+      !usesLocalStore && org && repo
+        ? `https://${config.githubHost}/${org}/${repo}`
+        : repoContext?.repoUrl,
+      "github-repo",
+    ],
+  ];
 
   const sidebarTreeProps = {
     paths: filePaths,
@@ -1548,31 +1410,6 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     colorScheme: resolvedAppColorScheme,
   };
 
-  const settingsProps: DiffSettingsProps = {
-    appColorScheme,
-    onColorSchemeChange: handleColorSchemeChange,
-    diffStyle,
-    onDiffStyleToggle: handleDiffStyleToggle,
-    orderBy,
-    orderDir,
-    onOrderByChange: setOrderBy,
-    onOrderDirToggle: handleOrderDirToggle,
-    diffThemeId,
-    onDiffThemeChange: setDiffThemeId,
-    selectedDiffThemeLabel: selectedDiffTheme.label,
-    showBackground,
-    setShowBackground,
-    showLineNumbers,
-    setShowLineNumbers,
-    wordWrap,
-    setWordWrap,
-    collapseRemovals,
-    setCollapseRemovals: handleCollapseRemovalsChange,
-    hideReviewed,
-    setHideReviewed,
-    onShortcutsOpen: () => setShortcutsOpen(true),
-  };
-
   return (
     <div className="flex h-dvh flex-col text-xs">
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
@@ -1582,23 +1419,23 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         isLocal={usesLocalStore}
         baseRef={isBranch ? baseRef : undefined}
         includeDirty={isBranch ? includeDirty : false}
-        onSettingsOpenChange={setSettingsOpen}
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}
         onToggleAllCollapsed={toggleAllFilesCollapsed}
         onExport={handleExport}
         exporting={exporting}
         onMenuOpen={loadRepoContext}
-        githubRepoUrl={githubRepoUrl}
-        githubPrUrl={githubPrUrl}
-        prDiffPath={prDiffPath}
-        branchDiffPath={branchDiffPath}
-        localDiffPath={localDiffPath}
+        links={menuLinks}
         pendingCommentCount={pendingCommentThreads.length}
         pullRequestInfo={currentPullRequestInfo}
         prUrl={prUrl}
-        settings={settingsProps}
-        settingsOpen={settingsOpen}
+        settings={{
+          settings,
+          onSettingChange: handleSettingChange,
+          appColorScheme,
+          onColorSchemeChange: handleColorSchemeChange,
+          onShortcutsOpen: () => setShortcutsOpen(true),
+        }}
         sidebarOpen={sidebarOpen}
         submittingPendingComments={submittingPendingComments}
       />
@@ -1631,7 +1468,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               <EmptyContent>
                 <button
                   type="button"
-                  onClick={() => setHideReviewed(false)}
+                  onClick={() => setSetting("hideReviewed", false)}
                   className={buttonVariants({ variant: "outline", size: "sm" })}
                 >
                   Show reviewed files
