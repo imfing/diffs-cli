@@ -1,6 +1,7 @@
 import type { DiffsThemeNames, SelectedLineRange, ThemesType, ThemeTypes } from "@pierre/diffs";
 import type { TablerIcon } from "@tabler/icons-react";
 import type { AppColorScheme } from "@/lib/colorScheme";
+import type { SetSetting, Settings } from "./useSettings";
 
 export type DiffStyle = "split" | "unified";
 export type DiffOrderBy = "path" | "changes" | "type";
@@ -57,9 +58,7 @@ export type AppConfig = {
 
 export type PullRequestInfo = {
   title: string;
-  state: string;
-  draft: boolean;
-  merged: boolean;
+  status: "Open" | "Draft" | "Merged" | "Closed";
   author: string;
   createdAt: string;
   updatedAt: string;
@@ -67,19 +66,8 @@ export type PullRequestInfo = {
   deletions: number;
   changedFiles: number;
   commits: number;
-  headRef: string;
-  headLabel: string;
-  headRepo: string;
-  baseRef: string;
-  baseLabel: string;
-  baseRepo: string;
-};
-
-export type ReviewComment = {
-  id: string;
-  author: string;
-  body: string;
-  createdAt: string;
+  baseBranch: string;
+  headBranch: string;
 };
 
 export type PendingCommentDraft = {
@@ -101,7 +89,7 @@ export type ReviewThread = {
   endSide?: "additions" | "deletions";
   endLine?: number;
   status: "open" | "resolved";
-  comments: ReviewComment[];
+  comments: { id: string; author: string; body: string; createdAt: string }[];
   replyToId?: number;
   url?: string;
   pending?: boolean;
@@ -126,26 +114,9 @@ export type CodeViewLineSelection = {
 };
 
 export type DiffSettingsProps = {
+  settings: Settings;
+  onSettingChange: SetSetting;
   appColorScheme: AppColorScheme;
   onColorSchemeChange: (value: AppColorScheme) => void;
-  diffStyle: DiffStyle;
-  onDiffStyleToggle: () => void;
-  orderBy: DiffOrderBy;
-  orderDir: DiffOrderDir;
-  onOrderByChange: (value: DiffOrderBy) => void;
-  onOrderDirToggle: () => void;
-  diffThemeId: DiffThemeId;
-  onDiffThemeChange: (value: DiffThemeId) => void;
-  selectedDiffThemeLabel: string;
-  showBackground: boolean;
-  setShowBackground: (value: boolean) => void;
-  showLineNumbers: boolean;
-  setShowLineNumbers: (value: boolean) => void;
-  wordWrap: boolean;
-  setWordWrap: (value: boolean) => void;
-  collapseRemovals: boolean;
-  setCollapseRemovals: (value: boolean) => void;
-  hideReviewed: boolean;
-  setHideReviewed: (value: boolean) => void;
   onShortcutsOpen: () => void;
 };

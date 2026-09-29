@@ -8,3 +8,11 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
   if (contentType.includes("application/json")) return res.json() as Promise<T>;
   return res.text() as Promise<T>;
 }
+
+export function apiSend<T = unknown>(path: string, method: string, body: unknown): Promise<T> {
+  return apiFetch<T>(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}

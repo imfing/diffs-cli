@@ -22,28 +22,24 @@ export function DiffStats({
     return { files: pathCount, additions, deletions, lines };
   }, [files, pathCount]);
 
+  const rows = [
+    ["Files", stats.files.toLocaleString(), ""],
+    ["Additions", `+${stats.additions.toLocaleString()}`, "text-green-600 dark:text-green-400"],
+    ["Deletions", `-${stats.deletions.toLocaleString()}`, "text-red-600 dark:text-red-400"],
+    ["Lines", stats.lines.toLocaleString(), ""],
+  ];
+
   return (
     <div className="shrink-0 border-t border-neutral-200 px-3 py-2 dark:border-neutral-700">
-      <div className="flex items-center justify-between py-0.5 text-xs">
-        <span className="text-neutral-500">Files</span>
-        <span className="font-mono tabular-nums font-semibold">{stats.files.toLocaleString()}</span>
-      </div>
-      <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-        <span className="text-neutral-500">Additions</span>
-        <span className="font-mono tabular-nums font-semibold text-green-600 dark:text-green-400">
-          +{stats.additions.toLocaleString()}
-        </span>
-      </div>
-      <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-        <span className="text-neutral-500">Deletions</span>
-        <span className="font-mono tabular-nums font-semibold text-red-600 dark:text-red-400">
-          -{stats.deletions.toLocaleString()}
-        </span>
-      </div>
-      <div className="flex items-center justify-between border-t border-neutral-200/75 py-0.5 text-xs dark:border-neutral-700/75">
-        <span className="text-neutral-500">Lines</span>
-        <span className="font-mono tabular-nums font-semibold">{stats.lines.toLocaleString()}</span>
-      </div>
+      {rows.map(([label, value, color], i) => (
+        <div
+          key={label}
+          className={`flex items-center justify-between py-0.5 text-xs${i > 0 ? " border-t border-neutral-200/75 dark:border-neutral-700/75" : ""}`}
+        >
+          <span className="text-neutral-500">{label}</span>
+          <span className={`font-mono tabular-nums font-semibold ${color}`}>{value}</span>
+        </div>
+      ))}
     </div>
   );
 }

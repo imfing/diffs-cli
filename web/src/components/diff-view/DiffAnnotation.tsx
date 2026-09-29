@@ -1,7 +1,5 @@
 import { CommentInput } from "@/components/CommentInput";
-import { IconTrash } from "@tabler/icons-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { CommentAvatar } from "./CommentAvatar";
+import { CommentAvatar, DeleteThreadButton, ThreadBadges } from "./ThreadParts";
 import type { AnnotationMeta, ReviewThread } from "./types";
 
 type AnnotationLike = {
@@ -36,37 +34,17 @@ export function DiffAnnotation({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="text-muted-foreground flex min-w-0 items-center gap-2">
           <span>{latestComment?.author ? `${latestComment.author} commented` : "Commented"}</span>
-          {meta.thread.comments.length > 1 && (
-            <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
-              {meta.thread.comments.length}
-            </span>
-          )}
-          {meta.thread.pending && (
-            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">
-              Pending
-            </span>
-          )}
+          <ThreadBadges thread={meta.thread} />
         </div>
         <p className="text-foreground w-full break-words whitespace-pre-wrap">
           {latestComment?.body ?? ""}
         </p>
       </div>
       {canDelete && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive -mr-1 -mt-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition group-hover/comment:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="Delete comment"
-                onClick={() => onDeleteComment(meta.thread)}
-              >
-                <IconTrash size={14} />
-              </button>
-            }
-          />
-          <TooltipContent>Delete comment</TooltipContent>
-        </Tooltip>
+        <DeleteThreadButton
+          className="-mr-1 -mt-1 group-hover/comment:opacity-100"
+          onClick={() => onDeleteComment(meta.thread)}
+        />
       )}
     </div>
   );
