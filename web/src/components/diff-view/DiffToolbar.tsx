@@ -407,15 +407,17 @@ export function DiffToolbar({
             {links.map(([href, kind]) => {
               if (!href) return null;
               const [Icon, label] = linkMeta[kind];
-              return href.startsWith("/") ? (
-                <DropdownMenuItem key={label} render={<Link to={href} />}>
-                  <Icon />
-                  {label}
-                </DropdownMenuItem>
-              ) : (
+              const external = !href.startsWith("/");
+              return (
                 <DropdownMenuItem
-                  key={label}
-                  render={<a href={href} target="_blank" rel="noopener noreferrer" />}
+                  key={kind}
+                  render={
+                    external ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer" />
+                    ) : (
+                      <Link to={href} />
+                    )
+                  }
                 >
                   <Icon />
                   {label}

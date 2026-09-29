@@ -148,8 +148,8 @@ export function prDiffPathFromUrl(prUrl: string): string | undefined {
 }
 
 // Byte-for-byte `diff --git` blocks for copy-diff. parsePatchFiles returns one
-// file per block in patch order; on any mismatch return nothing rather than
-// pair a file with the wrong block.
+// file per block in patch order; on any mismatch return nothing (and say so)
+// rather than pair a file with the wrong block.
 export function splitPatchByFile(
   patch: string | null,
   files: readonly FileDiffMetadata[],
@@ -157,6 +157,13 @@ export function splitPatchByFile(
   const blocks = (patch ?? "")
     .split(/^(?=diff --git )/m)
     .filter((b) => b.startsWith("diff --git "));
-  if (blocks.length !== files.length) return new Map();
+  if (blocks.length !== files.length) {
+    if (files.length > 0) {
+      console.warn(
+        `Copy diff unavailable: ${blocks.length} patch blocks vs ${files.length} parsed files`,
+      );
+    }
+    return new Map();
+  }
   return new Map(files.map((file, i) => [file.name, blocks[i]]));
 }

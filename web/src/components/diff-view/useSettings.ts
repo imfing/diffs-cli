@@ -21,6 +21,16 @@ export type SetSetting = <K extends keyof Settings>(name: K, value: Settings[K])
 
 const NAMES = Object.keys(SPEC) as (keyof Settings)[];
 
+// Server-config defaults, read by property so renaming an AppConfig field fails
+// to compile here instead of silently dropping the config.toml default.
+const CONFIG_DEFAULT: { [K in keyof Settings]?: (config: AppConfig) => unknown } = {
+  diffStyle: (config) => config.diffStyle,
+  diffTheme: (config) => config.diffTheme,
+  lineBackgrounds: (config) => config.lineBackgrounds,
+  lineNumbers: (config) => config.lineNumbers,
+  wordWrap: (config) => config.wordWrap,
+};
+
 // Values are persisted with String(), so compare string forms.
 function parse<K extends keyof Settings>(name: K, raw: unknown): Settings[K] | undefined {
   return (SPEC[name].values as Settings[K][]).find((value) => String(value) === String(raw));
@@ -39,9 +49,7 @@ export function useSettings(config: AppConfig) {
       Object.fromEntries(
         NAMES.map((name) => [
           name,
-          stored[name] ??
-            parse(name, (config as Record<string, unknown>)[name]) ??
-            SPEC[name].values[0],
+          stored[name] ?? parse(name, CONFIG_DEFAULT[name]?.(config)) ?? SPEC[name].values[0],
         ]),
       ) as Settings,
     [stored, config],

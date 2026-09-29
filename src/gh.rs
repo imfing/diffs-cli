@@ -28,8 +28,7 @@ pub struct RemoteRepo {
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestInfo {
     pub title: String,
-    /// One of "Open", "Draft", "Merged", "Closed".
-    pub status: String,
+    pub status: PullStatus,
     pub author: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -39,6 +38,16 @@ pub struct PullRequestInfo {
     pub commits: i64,
     pub base_branch: String,
     pub head_branch: String,
+}
+
+/// Display status of a pull request; serialized as the capitalized label the
+/// web UI shows (mirrored by `PullRequestInfo["status"]` in web/src).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum PullStatus {
+    Open,
+    Draft,
+    Merged,
+    Closed,
 }
 
 #[derive(Debug, Deserialize)]
@@ -354,7 +363,7 @@ pub async fn pull_request_info(
     let response = fetch_pull(github_host, org, repo, number).await?;
     Ok(PullRequestInfo {
         title: response.title,
-        status: pull_status(&response.state, response.draft, response.merged).to_string(),
+        status: pull_status(&response.state, response.draft, response.merged),
         author: response.user.map(|user| user.login).unwrap_or_default(),
         created_at: response.created_at,
         updated_at: response.updated_at,
@@ -367,15 +376,15 @@ pub async fn pull_request_info(
     })
 }
 
-fn pull_status(state: &str, draft: bool, merged: bool) -> &'static str {
+fn pull_status(state: &str, draft: bool, merged: bool) -> PullStatus {
     if merged {
-        "Merged"
+        PullStatus::Merged
     } else if state.eq_ignore_ascii_case("closed") {
-        "Closed"
+        PullStatus::Closed
     } else if draft {
-        "Draft"
+        PullStatus::Draft
     } else {
-        "Open"
+        PullStatus::Open
     }
 }
 
@@ -1050,10 +1059,14 @@ mod tests {
 
     #[test]
     fn pull_status_prefers_merged_then_closed_then_draft() {
-        assert_eq!(pull_status("closed", false, true), "Merged");
-        assert_eq!(pull_status("closed", true, false), "Closed");
-        assert_eq!(pull_status("open", true, false), "Draft");
-        assert_eq!(pull_status("open", false, false), "Open");
+        assert_eq!(pull_status("closed", false, true), PullStatus::Merged);
+        assert_eq!(pull_status("closed", true, false), PullStatus::Closed);
+        assert_eq!(pull_status("open", true, false), PullStatus::Draft);
+        assert_eq!(pull_status("open", false, false), PullStatus::Open);
+        assert_eq!(
+            serde_json::to_string(&PullStatus::Draft).unwrap(),
+            "\"Draft\""
+        );
     }
 
     #[test]

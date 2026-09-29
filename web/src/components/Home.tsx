@@ -1,12 +1,6 @@
 import { Link, useLocation } from "react-router";
 import { useEffect, type ReactNode } from "react";
-
-const linkBase =
-  "inline-flex h-9 items-center rounded-md px-3.5 text-sm font-medium no-underline outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-50 dark:focus-visible:ring-offset-neutral-950";
-const linkClasses = [
-  `${linkBase} bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-neutral-50 dark:text-neutral-950 dark:hover:bg-neutral-200`,
-  `${linkBase} border border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:bg-neutral-800`,
-];
+import { buttonVariants } from "@/components/ui/button";
 
 function InfoPage({
   pageTitle,
@@ -31,7 +25,11 @@ function InfoPage({
         {children}
         <div className="mt-6 flex flex-wrap gap-2">
           {links.map(([to, label], i) => (
-            <Link key={to} to={to} className={linkClasses[i]}>
+            <Link
+              key={to}
+              to={to}
+              className={buttonVariants({ variant: i === 0 ? "default" : "outline", size: "lg" })}
+            >
               {label}
             </Link>
           ))}
