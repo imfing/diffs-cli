@@ -25,6 +25,8 @@ pub enum GitError {
     BlobNotFound,
     #[error("file not found")]
     FileNotFound,
+    #[error("uncommitted changes can only be included for the checked-out branch")]
+    DirtyWithHead,
 }
 
 pub type Result<T> = std::result::Result<T, GitError>;
@@ -210,9 +212,23 @@ pub fn local_diff(cwd: impl AsRef<Path>) -> Result<String> {
     }
 }
 
-pub fn branch_diff(cwd: impl AsRef<Path>, base: &str, include_dirty: bool) -> Result<String> {
+/// Diffs `head` (the checked-out HEAD when `None`) against its merge-base with
+/// `base`, like `git diff base...head`. `include_dirty` diffs the merge-base
+/// against the working tree instead, so it requires `head` to be `None`.
+pub fn branch_diff(
+    cwd: impl AsRef<Path>,
+    base: &str,
+    head: Option<&str>,
+    include_dirty: bool,
+) -> Result<String> {
+    if include_dirty && head.is_some() {
+        return Err(GitError::DirtyWithHead);
+    }
     let repo = discover(cwd)?;
-    let head = repo.head()?.peel_to_commit()?;
+    let head = match head {
+        Some(head) => repo.revparse_single(head)?.peel_to_commit()?,
+        None => repo.head()?.peel_to_commit()?,
+    };
     let base_commit = repo.revparse_single(base)?.peel_to_commit()?;
     let merge_base = repo.merge_base(base_commit.id(), head.id())?;
     if include_dirty {
@@ -407,6 +423,24 @@ pub fn read_blob(cwd: impl AsRef<Path>, oid: &str) -> Result<Vec<u8>> {
     Ok(blob.content().to_vec())
 }
 
+/// Reads `rel_path` as committed at `rev` (e.g. a branch that isn't checked
+/// out), so callers don't depend on the working tree.
+pub fn read_rev_file(cwd: impl AsRef<Path>, rev: &str, rel_path: &str) -> Result<Vec<u8>> {
+    if !is_safe_repo_path(rel_path) {
+        return Err(GitError::InvalidRepoPath);
+    }
+    let repo = discover(cwd)?;
+    let tree = repo.revparse_single(rev)?.peel_to_commit()?.tree()?;
+    let entry = tree
+        .get_path(Path::new(rel_path))
+        .map_err(|_| GitError::FileNotFound)?;
+    let blob = entry
+        .to_object(&repo)?
+        .peel_to_blob()
+        .map_err(|_| GitError::FileNotFound)?;
+    Ok(blob.content().to_vec())
+}
+
 /// Whether `path` is a safe repository-relative path for a worktree file
 /// read: non-empty, relative (no leading `/`), no backslashes, and no empty,
 /// `.`, or `..` segments. Does not check the filesystem; callers must still
@@ -510,6 +544,39 @@ mod tests {
             !names.iter().any(|name| name.ends_with("/HEAD")),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn read_rev_file_reads_committed_content_not_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "user.email", "diffs@example.com"]);
+        git(root, &["config", "user.name", "Diffs Test"]);
+        fs::write(root.join("a.txt"), "main\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-m", "initial"]);
+        git(root, &["checkout", "-q", "-b", "feature"]);
+        fs::create_dir(root.join("dir")).unwrap();
+        fs::write(root.join("dir/b.txt"), "feature\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-m", "feature"]);
+        git(root, &["checkout", "-q", "main"]);
+        fs::write(root.join("a.txt"), "dirty\n").unwrap();
+
+        assert_eq!(
+            read_rev_file(root, "feature", "dir/b.txt").unwrap(),
+            b"feature\n"
+        );
+        assert_eq!(read_rev_file(root, "feature", "a.txt").unwrap(), b"main\n");
+        assert!(matches!(
+            read_rev_file(root, "main", "dir/b.txt"),
+            Err(GitError::FileNotFound)
+        ));
+        assert!(matches!(
+            read_rev_file(root, "feature", "../x"),
+            Err(GitError::InvalidRepoPath)
+        ));
     }
 
     #[test]

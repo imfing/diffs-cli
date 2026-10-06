@@ -75,6 +75,9 @@ Examples:
   # Compare against an explicit base
   diffs branch main
 
+  # Compare two branches without checking either out
+  diffs branch main feature/login
+
   # Include uncommitted changes
   diffs branch --include-dirty
 ";
@@ -157,14 +160,17 @@ enum Command {
         #[command(flatten)]
         serve: ServeFlags,
     },
-    #[command(about = "Review commits on the current branch against a base")]
+    #[command(about = "Review commits on a branch against a base")]
     #[command(after_help = BRANCH_AFTER_HELP)]
     Branch {
         /// Base ref to compare against (inferred from the PR or default branch when omitted)
         #[arg(value_name = "BASE")]
         base: Option<String>,
+        /// Branch to review (defaults to the checked-out branch)
+        #[arg(value_name = "HEAD", requires = "base")]
+        head: Option<String>,
         /// Include staged, unstaged, and untracked changes
-        #[arg(long)]
+        #[arg(long, conflicts_with = "head")]
         include_dirty: bool,
         #[command(flatten)]
         serve: ServeFlags,
@@ -257,6 +263,7 @@ pub async fn run(started: Instant) -> anyhow::Result<()> {
         }
         Some(Command::Branch {
             base,
+            head,
             include_dirty,
             serve,
         }) => {
@@ -265,7 +272,15 @@ pub async fn run(started: Instant) -> anyhow::Result<()> {
             // "could not infer base ref").
             resolve_repo_root_or_help(&cli.dir)?;
             let base = resolve_branch_base(base, &cli.dir).await?;
-            let target = branch_target(&base, include_dirty);
+            let head = head
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            if let Some(head) = &head
+                && !git::ref_exists(&cli.dir, head)
+            {
+                bail!("unknown head ref: {head}");
+            }
+            let target = branch_target(&base, head.as_deref(), include_dirty);
             run_server_target(&cli.dir, &serve, gh_host(None), &target, true, started).await
         }
         Some(Command::Comments(command)) => run_comments(&cli.dir, command),
@@ -521,8 +536,11 @@ fn target_label(target_path: &str, cwd: &std::path::Path) -> String {
         };
     }
     if target_path.starts_with("/branch") {
-        let base = branch_base_from_target(target_path);
-        let head = git::branch(cwd);
+        let base = target_query_param(target_path, "base");
+        let mut head = target_query_param(target_path, "head");
+        if head.is_empty() {
+            head = git::branch(cwd);
+        }
         let head = if head.is_empty() { "HEAD" } else { &head };
         return if base.is_empty() {
             format!("{head} branch diff")
@@ -537,12 +555,12 @@ fn target_label(target_path: &str, cwd: &std::path::Path) -> String {
     target_path.to_string()
 }
 
-fn branch_base_from_target(target_path: &str) -> String {
+fn target_query_param(target_path: &str, name: &str) -> String {
     let Some((_, query)) = target_path.split_once('?') else {
         return String::new();
     };
     url::form_urlencoded::parse(query.as_bytes())
-        .find(|(key, _)| key == "base")
+        .find(|(key, _)| key == name)
         .map(|(_, value)| value.into_owned())
         .unwrap_or_default()
 }
@@ -615,9 +633,12 @@ async fn resolve_branch_base(base: Option<String>, dir: &PathBuf) -> anyhow::Res
     bail!("could not infer base ref; pass one explicitly, e.g. `diffs branch main`")
 }
 
-fn branch_target(base: &str, include_dirty: bool) -> String {
+fn branch_target(base: &str, head: Option<&str>, include_dirty: bool) -> String {
     let mut params = url::form_urlencoded::Serializer::new(String::new());
     params.append_pair("base", base);
+    if let Some(head) = head {
+        params.append_pair("head", head);
+    }
     if include_dirty {
         params.append_pair("dirty", "1");
     }
@@ -650,7 +671,7 @@ fn run_comments(dir: &PathBuf, command: CommentsCommand) -> anyhow::Result<()> {
     let store = comments::Store::new(dir)?;
     match command.command {
         CommentSubcommand::List => {
-            let threads = store.list()?;
+            let threads = store.list(None)?;
             if command.json {
                 print_json(&serde_json::json!({ "threads": threads }))?;
             } else {
@@ -666,15 +687,18 @@ fn run_comments(dir: &PathBuf, command: CommentsCommand) -> anyhow::Result<()> {
             body,
             author,
         } => {
-            let thread = store.add_thread(comments::AddThreadInput {
-                path,
-                side,
-                line,
-                end_line: end_line.unwrap_or_default(),
-                end_side,
-                body: body_from_flag(body)?,
-                author,
-            })?;
+            let thread = store.add_thread(
+                None,
+                comments::AddThreadInput {
+                    path,
+                    side,
+                    line,
+                    end_line: end_line.unwrap_or_default(),
+                    end_side,
+                    body: body_from_flag(body)?,
+                    author,
+                },
+            )?;
             print_thread_result(&thread, command.json)?;
         }
         CommentSubcommand::Reply {
@@ -683,6 +707,7 @@ fn run_comments(dir: &PathBuf, command: CommentsCommand) -> anyhow::Result<()> {
             author,
         } => {
             let thread = store.add_reply(
+                None,
                 &thread_id,
                 comments::AddReplyInput {
                     body: body_from_flag(body)?,
@@ -692,11 +717,11 @@ fn run_comments(dir: &PathBuf, command: CommentsCommand) -> anyhow::Result<()> {
             print_thread_result(&thread, command.json)?;
         }
         CommentSubcommand::Resolve { thread_id } => {
-            let thread = store.resolve(&thread_id)?;
+            let thread = store.resolve(None, &thread_id)?;
             print_thread_result(&thread, command.json)?;
         }
         CommentSubcommand::Reopen { thread_id } => {
-            let thread = store.reopen(&thread_id)?;
+            let thread = store.reopen(None, &thread_id)?;
             print_thread_result(&thread, command.json)?;
         }
     }
@@ -794,25 +819,37 @@ mod tests {
     }
 
     #[test]
-    fn branch_target_encodes_base_and_dirty() {
+    fn branch_target_encodes_base_head_and_dirty() {
         assert_eq!(
-            branch_target("origin/main", false),
+            branch_target("origin/main", None, false),
             "/branch?base=origin%2Fmain"
         );
         assert_eq!(
-            branch_target("origin/main", true),
+            branch_target("origin/main", None, true),
             "/branch?base=origin%2Fmain&dirty=1"
+        );
+        assert_eq!(
+            branch_target("main", Some("feature/x"), false),
+            "/branch?base=main&head=feature%2Fx"
         );
     }
 
     #[test]
-    fn branch_base_from_target_decodes_base() {
+    fn target_query_param_decodes_values() {
         assert_eq!(
-            branch_base_from_target("/branch?base=origin%2Fmain"),
+            target_query_param("/branch?base=origin%2Fmain", "base"),
             "origin/main"
         );
-        assert_eq!(branch_base_from_target("/branch?base=main&dirty=1"), "main");
-        assert_eq!(branch_base_from_target("/local"), "");
+        assert_eq!(
+            target_query_param("/branch?base=main&dirty=1", "base"),
+            "main"
+        );
+        assert_eq!(
+            target_query_param("/branch?base=main&head=feature%2Fx", "head"),
+            "feature/x"
+        );
+        assert_eq!(target_query_param("/branch?base=main", "head"), "");
+        assert_eq!(target_query_param("/local", "base"), "");
     }
 
     #[test]
@@ -831,6 +868,10 @@ mod tests {
         assert_eq!(
             target_label("/branch?base=origin%2Fmain", dir.path()),
             "feature/startup -> origin/main"
+        );
+        assert_eq!(
+            target_label("/branch?base=main&head=other", dir.path()),
+            "other -> main"
         );
         assert_eq!(
             target_label("/org/repo/pull/123", dir.path()),

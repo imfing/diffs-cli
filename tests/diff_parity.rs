@@ -113,7 +113,7 @@ fn git_local_patch_no_head(dir: &Path) -> String {
 }
 
 /// Reconstructs `branchDiff` (three-dot) reference.
-fn git_branch_patch(dir: &Path, base: &str) -> String {
+fn git_branch_patch(dir: &Path, base: &str, head: &str) -> String {
     git_output(
         dir,
         &[
@@ -121,7 +121,7 @@ fn git_branch_patch(dir: &Path, base: &str) -> String {
             "--no-ext-diff",
             "--patch",
             "--submodule=diff",
-            &format!("{base}...HEAD"),
+            &format!("{base}...{head}"),
             "--",
         ],
     )
@@ -252,9 +252,24 @@ fn branch_diff_three_dot_matches_git() {
     git(dir, &["commit", "-am", "main moves on"]);
     git(dir, &["checkout", "-q", "feature"]);
 
-    let rust_patch = diffs::git::branch_diff(dir, "main", false).unwrap();
-    let git_patch = git_branch_patch(dir, "main");
+    let rust_patch = diffs::git::branch_diff(dir, "main", None, false).unwrap();
+    let git_patch = git_branch_patch(dir, "main", "HEAD");
     assert_per_file_parity(&rust_patch, &git_patch);
+
+    // An explicit head reviews that branch even when neither side is checked
+    // out, and ignores the (dirty) working tree of whatever is.
+    git(dir, &["checkout", "-q", "-b", "elsewhere", "main"]);
+    fs::write(dir.join("base.txt"), "dirty on elsewhere\n").unwrap();
+    let rust_patch = diffs::git::branch_diff(dir, "main", Some("feature"), false).unwrap();
+    let git_patch = git_branch_patch(dir, "main", "feature");
+    assert_per_file_parity(&rust_patch, &git_patch);
+    assert!(rust_patch.contains("feature.txt"), "{rust_patch}");
+    assert!(!rust_patch.contains("dirty on elsewhere"), "{rust_patch}");
+
+    assert!(matches!(
+        diffs::git::branch_diff(dir, "main", Some("feature"), true),
+        Err(diffs::git::GitError::DirtyWithHead)
+    ));
 }
 
 #[test]
@@ -277,7 +292,7 @@ fn branch_diff_include_dirty_matches_git() {
     fs::write(dir.join("base.txt"), "base dirty edit\n").unwrap();
     fs::write(dir.join("untracked.txt"), "loose\n").unwrap();
 
-    let rust_patch = diffs::git::branch_diff(dir, "main", true).unwrap();
+    let rust_patch = diffs::git::branch_diff(dir, "main", None, true).unwrap();
     let git_patch = git_branch_dirty_patch(dir, "main");
     assert_per_file_parity(&rust_patch, &git_patch);
 }

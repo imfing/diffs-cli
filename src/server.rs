@@ -96,6 +96,7 @@ struct BranchesResponse {
 #[derive(Debug, Deserialize)]
 struct BranchDiffQuery {
     base: Option<String>,
+    head: Option<String>,
     dirty: Option<String>,
 }
 
@@ -104,12 +105,16 @@ struct CommentTargetQuery {
     org: Option<String>,
     repo: Option<String>,
     number: Option<String>,
+    /// Local comments only: scope to this branch instead of the checked-out one.
+    branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct BlobQuery {
     oid: Option<String>,
     path: Option<String>,
+    /// With `path`: read the file as committed at this ref.
+    rev: Option<String>,
     worktree: Option<String>,
 }
 
@@ -294,8 +299,23 @@ async fn handle_branch_diff(
             format!("invalid base ref: {base:?}"),
         );
     }
-    match git::branch_diff(&state.cwd, &base, dirty_enabled(query.dirty.as_deref())) {
+    let head = query
+        .head
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    if let Some(head) = head
+        && !is_safe_ref_arg(head)
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!("invalid head ref: {head:?}"),
+        );
+    }
+    let include_dirty = dirty_enabled(query.dirty.as_deref());
+    match git::branch_diff(&state.cwd, &base, head, include_dirty) {
         Ok(patch) => text(patch),
+        Err(err @ git::GitError::DirtyWithHead) => error(StatusCode::BAD_REQUEST, err),
         Err(err) => error(StatusCode::BAD_GATEWAY, err),
     }
 }
@@ -367,11 +387,11 @@ async fn handle_list_comments(
                 Err(err) => error(StatusCode::BAD_GATEWAY, err),
             }
         }
-        CommentScope::Local => {
+        CommentScope::Local(scope) => {
             let Some(store) = state.comments else {
                 return comments_unavailable();
             };
-            match store.list() {
+            match store.list(scope.as_deref()) {
                 Ok(threads) => {
                     (StatusCode::OK, Json(json!({ "threads": threads }))).into_response()
                 }
@@ -402,11 +422,11 @@ async fn handle_add_comment(
                 Err(err) => error(StatusCode::BAD_GATEWAY, err),
             }
         }
-        CommentScope::Local => {
+        CommentScope::Local(scope) => {
             let Some(store) = state.comments else {
                 return comments_unavailable();
             };
-            match store.add_thread(input) {
+            match store.add_thread(scope.as_deref(), input) {
                 Ok(thread) => (StatusCode::CREATED, Json(thread)).into_response(),
                 Err(err) => comment_error(err),
             }
@@ -425,11 +445,11 @@ async fn handle_delete_comment(
             StatusCode::BAD_REQUEST,
             "deleting GitHub comments is not supported",
         ),
-        CommentScope::Local => {
+        CommentScope::Local(scope) => {
             let Some(store) = state.comments else {
                 return comments_unavailable();
             };
-            match store.delete(&thread_id) {
+            match store.delete(scope.as_deref(), &thread_id) {
                 Ok(()) => StatusCode::NO_CONTENT.into_response(),
                 Err(err) => comment_error(err),
             }
@@ -456,9 +476,9 @@ async fn handle_reply_comment(
             )
             .await,
         ),
-        CommentScope::Local => {
-            write_thread_or_error(state.comments, |store| store.add_reply(&thread_id, input))
-        }
+        CommentScope::Local(scope) => write_thread_or_error(state.comments, |store| {
+            store.add_reply(scope.as_deref(), &thread_id, input)
+        }),
     }
 }
 
@@ -497,11 +517,11 @@ async fn set_resolved(
             )
             .await,
         ),
-        CommentScope::Local => write_thread_or_error(state.comments, |store| {
+        CommentScope::Local(scope) => write_thread_or_error(state.comments, |store| {
             if resolved {
-                store.resolve(&thread_id)
+                store.resolve(scope.as_deref(), &thread_id)
             } else {
-                store.reopen(&thread_id)
+                store.reopen(scope.as_deref(), &thread_id)
             }
         }),
     }
@@ -551,12 +571,18 @@ async fn handle_blob(State(state): State<AppState>, Query(query): Query<BlobQuer
             "oid and path are mutually exclusive",
         );
     }
+    let rev = query.rev.as_deref().unwrap_or_default().trim();
     let result = if !oid.is_empty() {
         git::read_blob(&state.cwd, oid)
+    } else if !rev.is_empty() {
+        if !is_safe_ref_arg(rev) {
+            return error(StatusCode::BAD_REQUEST, format!("invalid rev: {rev:?}"));
+        }
+        git::read_rev_file(&state.cwd, rev, path)
     } else if dirty_enabled(query.worktree.as_deref()) {
         git::read_worktree_file(&state.cwd, path)
     } else {
-        return error(StatusCode::BAD_REQUEST, "path requires worktree=1");
+        return error(StatusCode::BAD_REQUEST, "path requires rev or worktree=1");
     };
     match result {
         Ok(bytes) => blob_response(bytes),
@@ -733,20 +759,26 @@ struct PullTarget {
 }
 
 enum CommentScope {
-    Local,
+    /// Local comments, scoped to the given branch or else the checked-out one.
+    Local(Option<String>),
     Pull(PullTarget),
     Invalid,
 }
 
-/// Empty org/repo/number means local comments; otherwise the trio must pass the
-/// same validators as the PR routes, or the request is rejected with 400
-/// (`Invalid`).
+/// Empty org/repo/number means local comments (optionally scoped by a `branch`
+/// that must be a safe ref); otherwise the trio must pass the same validators
+/// as the PR routes, or the request is rejected with 400 (`Invalid`).
 fn comment_scope(target: &CommentTargetQuery) -> CommentScope {
     let org = target.org.as_deref().unwrap_or_default();
     let repo = target.repo.as_deref().unwrap_or_default();
     let number = target.number.as_deref().unwrap_or_default();
     if org.is_empty() && repo.is_empty() && number.is_empty() {
-        return CommentScope::Local;
+        let branch = target.branch.as_deref().map(str::trim).unwrap_or_default();
+        return match branch {
+            "" => CommentScope::Local(None),
+            b if is_safe_ref_arg(b) => CommentScope::Local(Some(b.to_string())),
+            _ => CommentScope::Invalid,
+        };
     }
     if safe_path_part(org) && safe_path_part(repo) && pull_number(number) {
         CommentScope::Pull(PullTarget {
@@ -1152,13 +1184,32 @@ mod tests {
             org: None,
             repo: None,
             number: None,
+            branch: None,
         };
-        assert!(matches!(comment_scope(&local), CommentScope::Local));
+        assert!(matches!(comment_scope(&local), CommentScope::Local(None)));
+
+        let scoped = CommentTargetQuery {
+            branch: Some("feature/x".into()),
+            ..local
+        };
+        match comment_scope(&scoped) {
+            CommentScope::Local(Some(branch)) => assert_eq!(branch, "feature/x"),
+            _ => panic!("expected branch-scoped local scope"),
+        }
+
+        let bad_branch = CommentTargetQuery {
+            org: None,
+            repo: None,
+            number: None,
+            branch: Some("a..b".into()),
+        };
+        assert!(matches!(comment_scope(&bad_branch), CommentScope::Invalid));
 
         let pull = CommentTargetQuery {
             org: Some("org".into()),
             repo: Some("repo".into()),
             number: Some("123".into()),
+            branch: None,
         };
         match comment_scope(&pull) {
             CommentScope::Pull(t) => assert_eq!(
@@ -1172,6 +1223,7 @@ mod tests {
             org: Some("../bad".into()),
             repo: Some("repo".into()),
             number: Some("123".into()),
+            branch: None,
         };
         assert!(matches!(comment_scope(&invalid), CommentScope::Invalid));
     }

@@ -288,6 +288,8 @@ const fetchBlob = (oid: string, name: string) =>
   fetchFile(`/api/blob?oid=${encodeURIComponent(oid)}`, name, `blob:${oid}`);
 const fetchWorktree = (path: string) =>
   fetchFile(`/api/blob?${new URLSearchParams({ path, worktree: "1" })}`, path);
+const fetchRevFile = (rev: string, path: string) =>
+  fetchFile(`/api/blob?${new URLSearchParams({ path, rev })}`, path);
 
 export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch" } = {}) {
   const { org, repo, number } = useParams<{
@@ -297,6 +299,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   }>();
   const [searchParams] = useSearchParams();
   const baseRef = source === "branch" ? (searchParams.get("base") ?? "") : "";
+  // Explicit branch to review; empty means the checked-out branch.
+  const headRef = source === "branch" ? (searchParams.get("head") ?? "") : "";
   const includeDirty = source === "branch" && searchParams.get("dirty") === "1";
 
   const [appColorScheme, setAppColorScheme] = useState<AppColorScheme>(() => initialColorScheme());
@@ -355,7 +359,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const sessionKey = isLocal
     ? "local"
     : isBranch
-      ? `branch:${baseRef}`
+      ? `branch:${baseRef}${headRef ? `...${headRef}` : ""}`
       : `pr:${org}/${repo}/${number}`;
   const scrollStorageKey = `diffs-scroll:${sessionKey}`;
   const collapsedStorageKey = `diffs-collapsed:${sessionKey}`;
@@ -364,16 +368,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const prUrl =
     org && repo && number ? `https://${config.githubHost}/${org}/${repo}/pull/${number}` : "";
   const prQuery = hasPr ? new URLSearchParams({ org, repo, number }).toString() : "";
+  // Local threads are scoped to the reviewed branch, not the checked-out one.
+  const localCommentQuery = headRef ? `?branch=${encodeURIComponent(headRef)}` : "";
   const commentsEndpoint = usesLocalStore
-    ? "/api/comments"
+    ? `/api/comments${localCommentQuery}`
     : hasPr
       ? `/api/comments?${prQuery}`
       : null;
   const pullRequestInfoEndpoint = hasPr
     ? `/api/pull/${[org, repo, number].map(encodeURIComponent).join("/")}`
     : null;
+  const headLabel = headRef || config.gitBranch.trim();
   const baseTitle = isBranch
-    ? `${baseRef || "base"} ← ${config.gitBranch.trim() || "HEAD"}`
+    ? `${baseRef || "base"} ← ${headLabel || "HEAD"}`
     : isLocal
       ? localRepoTitle(config.cwd, config.gitBranch)
       : org && repo && number
@@ -436,7 +443,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         return;
       }
       const endpoint = isBranch
-        ? `/api/branch-diff?base=${encodeURIComponent(baseRef)}${includeDirty ? "&dirty=1" : ""}`
+        ? `/api/branch-diff?${new URLSearchParams({
+            base: baseRef,
+            ...(headRef ? { head: headRef } : {}),
+            ...(includeDirty ? { dirty: "1" } : {}),
+          })}`
         : isLocal
           ? "/api/local-diff"
           : `/api/patch/${org}/${repo}/${number}`;
@@ -478,7 +489,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       eventSource?.close();
       if (fallbackInterval != null) window.clearInterval(fallbackInterval);
     };
-  }, [isLocal, isBranch, usesLocalStore, baseRef, includeDirty, org, repo, number]);
+  }, [isLocal, isBranch, usesLocalStore, baseRef, headRef, includeDirty, org, repo, number]);
 
   useEffect(() => {
     if (pullRequestInfoEndpoint == null) return;
@@ -973,7 +984,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         return;
       }
       if (!usesLocalStore) return;
-      apiFetch(`/api/comments/${encodeURIComponent(thread.id)}`, { method: "DELETE" })
+      apiFetch(`/api/comments/${encodeURIComponent(thread.id)}${localCommentQuery}`, {
+        method: "DELETE",
+      })
         .then(() => {
           setCommentThreads((prev) => prev.filter((current) => current.id !== thread.id));
         })
@@ -981,7 +994,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           console.error("Failed to delete comment:", err);
         });
     },
-    [usesLocalStore],
+    [usesLocalStore, localCommentQuery],
   );
 
   useEffect(() => {
@@ -1045,9 +1058,13 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         return { oldFile, newFile };
       }
       // Pure renames carry no `index` line (and thus no object ids); their
-      // content is unchanged, so read the new path from the worktree.
+      // content is unchanged, so read the new path from the worktree, or from
+      // the reviewed branch when it isn't the checked-out one.
       if (fileDiff.type === "rename-pure")
-        return { oldFile: null, newFile: await fetchWorktree(newName) };
+        return {
+          oldFile: null,
+          newFile: await (headRef ? fetchRevFile(headRef, newName) : fetchWorktree(newName)),
+        };
       const { prevObjectId, newObjectId } = fileDiff;
       if (isZeroOid(prevObjectId)) throw new Error(`missing prevObjectId for ${fileDiff.name}`);
       const [oldFile, newFile] = await Promise.all([
@@ -1059,7 +1076,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       ]);
       return { oldFile, newFile };
     },
-    [usesLocalStore, isLocal, hasPr, pullRequestInfoEndpoint],
+    [usesLocalStore, isLocal, hasPr, pullRequestInfoEndpoint, headRef],
   );
 
   // Only local diffs edit the worktree. Pure renames have no rows to edit.
@@ -1185,7 +1202,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     if (exporting || visibleFiles.length === 0) return;
     setExporting(true);
     try {
-      const subtitle = isLocal ? config.cwd : isBranch ? config.gitBranch.trim() : prUrl;
+      const subtitle = isLocal ? config.cwd : isBranch ? headLabel : prUrl;
       await exportDiffToHtml({
         files: visibleFiles,
         options: codeViewOptions,
@@ -1208,7 +1225,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     isLocal,
     isBranch,
     config.cwd,
-    config.gitBranch,
+    headLabel,
     config.codeFontFamily,
     config.uiFontFamily,
     prUrl,
@@ -1418,6 +1435,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         config={config}
         isLocal={usesLocalStore}
         baseRef={isBranch ? baseRef : undefined}
+        headRef={isBranch ? headRef : undefined}
         includeDirty={isBranch ? includeDirty : false}
         onSidebarToggle={openSidebar}
         onSubmitPendingComments={submitPendingComments}
