@@ -49,6 +49,12 @@ function gitStatusForFile(file: FileDiffMetadata): GitStatusEntry["status"] {
   }
 }
 
+// "a/b/c.ts" -> ["a/", "a/b/"], matching the tree's folder row paths.
+function ancestorDirs(path: string): string[] {
+  const parts = path.split("/").slice(0, -1);
+  return parts.map((_, i) => `${parts.slice(0, i + 1).join("/")}/`);
+}
+
 function SidebarIconButton({
   tooltip,
   ...buttonProps
@@ -64,6 +70,7 @@ function SidebarIconButton({
 export function SidebarTree({
   paths,
   files,
+  reviewedPaths,
   comments,
   onFileActivate,
   onCommentActivate,
@@ -73,6 +80,7 @@ export function SidebarTree({
 }: {
   paths: readonly string[];
   files: readonly FileDiffMetadata[];
+  reviewedPaths: ReadonlySet<string>;
   comments: readonly ReviewThread[];
   onFileActivate: (path: string) => void;
   onCommentActivate: (thread: ReviewThread) => void;
@@ -144,6 +152,30 @@ export function SidebarTree({
   useEffect(() => {
     model.setGitStatus(gitStatus);
   }, [model, gitStatus]);
+  // The tree has no per-row styling API (and unsafeCSS is fixed at creation), so dim
+  // reviewed rows via a style element in its open shadow root. The shadow root is attached
+  // after this effect on (re)mount, hence the frame delay. Folders (rows keyed "dir/") dim
+  // once every file under them is reviewed.
+  useEffect(() => {
+    const unreviewedDirs = new Set(
+      paths.filter((path) => !reviewedPaths.has(path)).flatMap(ancestorDirs),
+    );
+    const dimmed = [...reviewedPaths].flatMap((path) => [
+      path,
+      ...ancestorDirs(path).filter((dir) => !unreviewedDirs.has(dir)),
+    ]);
+    const style = document.createElement("style");
+    style.textContent = [...new Set(dimmed)]
+      .map((path) => `[data-item-path="${CSS.escape(path)}"] { opacity: 0.5; }`)
+      .join("\n");
+    const frame = requestAnimationFrame(() =>
+      model.getFileTreeContainer()?.shadowRoot?.append(style),
+    );
+    return () => {
+      cancelAnimationFrame(frame);
+      style.remove();
+    };
+  }, [model, paths, reviewedPaths, section]);
 
   const search = useFileTreeSearch(model);
   const fileTreeStyle = useMemo<FileTreeStyle>(
