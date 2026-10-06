@@ -8,6 +8,7 @@ import {
   lazy,
   Suspense,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useParams, useSearchParams, Link } from "react-router";
 import {
@@ -91,6 +92,9 @@ import { exportDiffToHtml } from "@/lib/exportHtml";
 import { DEFAULT_CODE_FONT_FAMILY, DEFAULT_UI_FONT_FAMILY, prependFontFamily } from "@/lib/fonts";
 
 const MobileSidebarDrawer = lazy(() => import("./diff-view/MobileSidebarDrawer"));
+
+const SIDEBAR_WIDTH_KEY = "diffs-sidebar-width";
+const DEFAULT_SIDEBAR_WIDTH = 320;
 
 const codeViewStyle = {
   flex: 1,
@@ -305,6 +309,26 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(
+    () => Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_SIDEBAR_WIDTH,
+  );
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+  const startSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const left = handle.parentElement!.getBoundingClientRect().left;
+    handle.setPointerCapture(event.pointerId);
+    const onMove = (e: PointerEvent) =>
+      setSidebarWidth(Math.round(Math.min(Math.max(e.clientX - left, 200), 640)));
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  }, []);
   const [submittingPendingComments, setSubmittingPendingComments] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [repoContext, setRepoContext] = useState<{
@@ -555,15 +579,18 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   if (reviewed.key !== reviewedStorageKey) {
     setReviewed({ key: reviewedStorageKey, map: readReviewedSignatures(reviewedStorageKey) });
   }
-  const hiddenReviewedNames = useMemo(() => {
+  const reviewedNames = useMemo(() => {
     const names = new Set<string>();
-    if (!hideReviewed) return names;
     for (const f of files) {
       const sig = fileSignatures.get(f.name);
       if (sig != null && reviewed.map.get(f.name) === sig) names.add(f.name);
     }
     return names;
-  }, [hideReviewed, files, fileSignatures, reviewed]);
+  }, [files, fileSignatures, reviewed]);
+  const hiddenReviewedNames = useMemo(
+    () => (hideReviewed ? reviewedNames : new Set<string>()),
+    [hideReviewed, reviewedNames],
+  );
   const visibleFiles = useMemo(
     () =>
       hiddenReviewedNames.size === 0
@@ -1403,6 +1430,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const sidebarTreeProps = {
     paths: filePaths,
     files: visibleFiles,
+    reviewedPaths: reviewedNames,
     comments: commentThreads,
     onFileActivate: scrollToFile,
     onCommentActivate: scrollToThread,
@@ -1442,8 +1470,19 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
 
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
-          <aside className="hidden w-[320px] shrink-0 overflow-hidden border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 md:block">
+          <aside
+            className="relative hidden shrink-0 overflow-hidden border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 md:block"
+            style={{ width: sidebarWidth }}
+          >
             <SidebarTree {...sidebarTreeProps} />
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+              className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize hover:bg-neutral-300 dark:hover:bg-neutral-600"
+              onPointerDown={startSidebarResize}
+              onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
+            />
           </aside>
         )}
         {mobileSidebarOpen && (

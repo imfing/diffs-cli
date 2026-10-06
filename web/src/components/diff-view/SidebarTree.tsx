@@ -64,6 +64,7 @@ function SidebarIconButton({
 export function SidebarTree({
   paths,
   files,
+  reviewedPaths,
   comments,
   onFileActivate,
   onCommentActivate,
@@ -73,6 +74,7 @@ export function SidebarTree({
 }: {
   paths: readonly string[];
   files: readonly FileDiffMetadata[];
+  reviewedPaths: ReadonlySet<string>;
   comments: readonly ReviewThread[];
   onFileActivate: (path: string) => void;
   onCommentActivate: (thread: ReviewThread) => void;
@@ -144,6 +146,22 @@ export function SidebarTree({
   useEffect(() => {
     model.setGitStatus(gitStatus);
   }, [model, gitStatus]);
+  // The tree has no per-row styling API (and unsafeCSS is fixed at creation), so dim
+  // reviewed rows via a style element in its open shadow root. The shadow root is attached
+  // after this effect on (re)mount, hence the frame delay.
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = [...reviewedPaths]
+      .map((path) => `[data-item-path="${CSS.escape(path)}"] { opacity: 0.5; }`)
+      .join("\n");
+    const frame = requestAnimationFrame(() =>
+      model.getFileTreeContainer()?.shadowRoot?.append(style),
+    );
+    return () => {
+      cancelAnimationFrame(frame);
+      style.remove();
+    };
+  }, [model, reviewedPaths, section]);
 
   const search = useFileTreeSearch(model);
   const fileTreeStyle = useMemo<FileTreeStyle>(
