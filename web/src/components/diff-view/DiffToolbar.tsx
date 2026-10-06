@@ -73,22 +73,23 @@ function BranchChip({ label, title }: { label: string; title: string }) {
   );
 }
 
+// An empty head means the checked-out branch; dirty changes only apply there.
 function branchDiffHref(base: string, head: string, includeDirty: boolean) {
   const params = new URLSearchParams();
   params.set("base", base);
   if (head) params.set("head", head);
-  if (includeDirty) params.set("dirty", "1");
+  else if (includeDirty) params.set("dirty", "1");
   return `/branch?${params.toString()}`;
 }
 
-function BaseBranchSwitcher({
-  baseRef,
-  headRef,
-  includeDirty,
+function BranchSwitcher({
+  role,
+  current,
+  hrefFor,
 }: {
-  baseRef: string;
-  headRef: string;
-  includeDirty: boolean;
+  role: "Base" | "Head";
+  current: string;
+  hrefFor: (name: string) => string;
 }) {
   const [branches, setBranches] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -98,10 +99,10 @@ function BaseBranchSwitcher({
     apiFetch<{ branches: string[] }>("/api/branches")
       .then((data) => {
         const names = [...(data.branches ?? [])];
-        if (baseRef !== "" && !names.includes(baseRef)) names.unshift(baseRef);
+        if (current !== "" && !names.includes(current)) names.unshift(current);
         setBranches(names);
       })
-      .catch(() => setBranches(baseRef !== "" ? [baseRef] : []))
+      .catch(() => setBranches(current !== "" ? [current] : []))
       .finally(() => setLoading(false));
   };
 
@@ -116,10 +117,11 @@ function BaseBranchSwitcher({
           <button
             type="button"
             className={`${chipButtonClass} max-w-[12rem]`}
-            title={`Base: ${baseRef}. Click to switch.`}
-            aria-label={`Base branch ${baseRef}. Click to switch.`}
+            title={`${role}: ${current}. Click to switch.`}
+            aria-label={`${role} branch ${current}. Click to switch.`}
           >
-            <span className="min-w-0 truncate">{baseRef}</span>
+            {role === "Head" && <IconGitBranch size={12} className="shrink-0" />}
+            <span className="min-w-0 truncate">{current}</span>
             <IconChevronDown size={12} className="shrink-0 opacity-60" />
           </button>
         }
@@ -134,11 +136,11 @@ function BaseBranchSwitcher({
           <div className="px-2 py-1.5 text-[12px] text-muted-foreground">No branches found</div>
         ) : (
           branches?.map((name) => {
-            const selected = name === baseRef;
+            const selected = name === current;
             return (
               <DropdownMenuItem
                 key={name}
-                render={<Link to={branchDiffHref(name, headRef, includeDirty)} />}
+                render={<Link to={hrefFor(name)} />}
                 className={selected ? "font-medium" : undefined}
                 aria-current={selected ? "true" : undefined}
               >
@@ -283,21 +285,33 @@ export function DiffToolbar({
             >
               {displayLocalPath(config.cwd)}
             </span>
-            {baseRef && baseRef.trim() !== "" && (
+            {baseRef && baseRef.trim() !== "" ? (
               <>
-                <BaseBranchSwitcher
-                  baseRef={baseRef.trim()}
-                  headRef={headRef}
-                  includeDirty={includeDirty}
+                <BranchSwitcher
+                  role="Base"
+                  current={baseRef.trim()}
+                  hrefFor={(name) => branchDiffHref(name, headRef, includeDirty)}
                 />
                 <IconArrowLeft
                   size={12}
                   className="shrink-0 text-neutral-400 dark:text-neutral-500"
                 />
+                <BranchSwitcher
+                  role="Head"
+                  current={branchLabel || "HEAD"}
+                  hrefFor={(name) =>
+                    branchDiffHref(
+                      baseRef.trim(),
+                      name === config.gitBranch.trim() ? "" : name,
+                      includeDirty,
+                    )
+                  }
+                />
               </>
-            )}
-            {branchLabel !== "" && (
-              <BranchChip label={branchLabel} title={`Branch: ${branchLabel}`} />
+            ) : (
+              branchLabel !== "" && (
+                <BranchChip label={branchLabel} title={`Branch: ${branchLabel}`} />
+              )
             )}
           </div>
         ) : (
