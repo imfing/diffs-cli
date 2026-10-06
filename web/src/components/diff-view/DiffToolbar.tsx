@@ -73,14 +73,23 @@ function BranchChip({ label, title }: { label: string; title: string }) {
   );
 }
 
-function branchDiffHref(base: string, includeDirty: boolean) {
+function branchDiffHref(base: string, head: string, includeDirty: boolean) {
   const params = new URLSearchParams();
   params.set("base", base);
+  if (head) params.set("head", head);
   if (includeDirty) params.set("dirty", "1");
   return `/branch?${params.toString()}`;
 }
 
-function BaseBranchSwitcher({ baseRef, includeDirty }: { baseRef: string; includeDirty: boolean }) {
+function BaseBranchSwitcher({
+  baseRef,
+  headRef,
+  includeDirty,
+}: {
+  baseRef: string;
+  headRef: string;
+  includeDirty: boolean;
+}) {
   const [branches, setBranches] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -129,7 +138,7 @@ function BaseBranchSwitcher({ baseRef, includeDirty }: { baseRef: string; includ
             return (
               <DropdownMenuItem
                 key={name}
-                render={<Link to={branchDiffHref(name, includeDirty)} />}
+                render={<Link to={branchDiffHref(name, headRef, includeDirty)} />}
                 className={selected ? "font-medium" : undefined}
                 aria-current={selected ? "true" : undefined}
               >
@@ -215,6 +224,7 @@ export function DiffToolbar({
   config,
   isLocal,
   baseRef,
+  headRef = "",
   includeDirty = false,
   onSidebarToggle,
   onSubmitPendingComments,
@@ -234,6 +244,7 @@ export function DiffToolbar({
   config: AppConfig;
   isLocal: boolean;
   baseRef?: string;
+  headRef?: string;
   includeDirty?: boolean;
   onSidebarToggle: () => void;
   onSubmitPendingComments: () => void;
@@ -250,6 +261,7 @@ export function DiffToolbar({
   submittingPendingComments: boolean;
 }) {
   const remoteTitle = pullRequestTitle(prUrl);
+  const branchLabel = headRef || config.gitBranch.trim();
   const baseBranch = pullRequestInfo?.baseBranch ?? "";
   const headBranch = pullRequestInfo?.headBranch ?? "";
   const createdAt = pullRequestInfo ? formatPullRequestDate(pullRequestInfo.createdAt) : "";
@@ -273,18 +285,19 @@ export function DiffToolbar({
             </span>
             {baseRef && baseRef.trim() !== "" && (
               <>
-                <BaseBranchSwitcher baseRef={baseRef.trim()} includeDirty={includeDirty} />
+                <BaseBranchSwitcher
+                  baseRef={baseRef.trim()}
+                  headRef={headRef}
+                  includeDirty={includeDirty}
+                />
                 <IconArrowLeft
                   size={12}
                   className="shrink-0 text-neutral-400 dark:text-neutral-500"
                 />
               </>
             )}
-            {config.gitBranch.trim() !== "" && (
-              <BranchChip
-                label={config.gitBranch.trim()}
-                title={`Branch: ${config.gitBranch.trim()}`}
-              />
+            {branchLabel !== "" && (
+              <BranchChip label={branchLabel} title={`Branch: ${branchLabel}`} />
             )}
           </div>
         ) : (

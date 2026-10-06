@@ -114,7 +114,12 @@ impl Store {
         &self.root
     }
 
-    pub fn branch(&self) -> String {
+    /// The branch threads are scoped to: `scope` when given (reviewing a branch
+    /// that isn't checked out), otherwise the checked-out branch.
+    pub fn branch(&self, scope: Option<&str>) -> String {
+        if let Some(scope) = scope.map(str::trim).filter(|s| !s.is_empty()) {
+            return scope.to_string();
+        }
         let branch = git::branch(&self.root);
         if branch.is_empty() {
             "local".to_string()
@@ -123,10 +128,10 @@ impl Store {
         }
     }
 
-    pub fn list(&self) -> Result<Vec<Thread>> {
+    pub fn list(&self, scope: Option<&str>) -> Result<Vec<Thread>> {
         let _guard = self.lock.lock().expect("comment store lock poisoned");
         let file = self.load()?;
-        let branch = self.branch();
+        let branch = self.branch(scope);
         Ok(file
             .threads
             .into_iter()
@@ -134,7 +139,7 @@ impl Store {
             .collect())
     }
 
-    pub fn add_thread(&self, input: AddThreadInput) -> Result<Thread> {
+    pub fn add_thread(&self, scope: Option<&str>, input: AddThreadInput) -> Result<Thread> {
         let clean = clean_thread_input(input.clone())?;
         let author = clean_author(&self.root, input.author);
         let now = Utc::now();
@@ -167,20 +172,25 @@ impl Store {
         }
 
         let _guard = self.lock.lock().expect("comment store lock poisoned");
-        thread.branch = self.branch();
+        thread.branch = self.branch(scope);
         let mut file = self.load()?;
         file.threads.push(thread.clone());
         self.save(file)?;
         Ok(thread)
     }
 
-    pub fn add_reply(&self, thread_id: &str, input: AddReplyInput) -> Result<Thread> {
+    pub fn add_reply(
+        &self,
+        scope: Option<&str>,
+        thread_id: &str,
+        input: AddReplyInput,
+    ) -> Result<Thread> {
         let body = input.body.trim().to_string();
         if body.is_empty() {
             return validation("body is required");
         }
         let author = clean_author(&self.root, input.author);
-        self.update_thread(thread_id, |thread, now| {
+        self.update_thread(scope, thread_id, |thread, now| {
             thread.comments.push(Comment {
                 id: new_id("cmt"),
                 author,
@@ -191,22 +201,22 @@ impl Store {
         })
     }
 
-    pub fn resolve(&self, thread_id: &str) -> Result<Thread> {
-        self.set_status(thread_id, "resolved")
+    pub fn resolve(&self, scope: Option<&str>, thread_id: &str) -> Result<Thread> {
+        self.set_status(scope, thread_id, "resolved")
     }
 
-    pub fn reopen(&self, thread_id: &str) -> Result<Thread> {
-        self.set_status(thread_id, "open")
+    pub fn reopen(&self, scope: Option<&str>, thread_id: &str) -> Result<Thread> {
+        self.set_status(scope, thread_id, "open")
     }
 
-    pub fn delete(&self, thread_id: &str) -> Result<()> {
+    pub fn delete(&self, scope: Option<&str>, thread_id: &str) -> Result<()> {
         let thread_id = thread_id.trim();
         if thread_id.is_empty() {
             return validation("thread id is required");
         }
         let _guard = self.lock.lock().expect("comment store lock poisoned");
         let mut file = self.load()?;
-        let branch = self.branch();
+        let branch = self.branch(scope);
         let original_len = file.threads.len();
         file.threads
             .retain(|thread| thread.id != thread_id || thread.branch != branch);
@@ -216,8 +226,8 @@ impl Store {
         self.save(file)
     }
 
-    fn set_status(&self, thread_id: &str, status: &str) -> Result<Thread> {
-        self.update_thread(thread_id, |thread, now| {
+    fn set_status(&self, scope: Option<&str>, thread_id: &str, status: &str) -> Result<Thread> {
+        self.update_thread(scope, thread_id, |thread, now| {
             thread.status = status.to_string();
             thread.updated_at = now;
         })
@@ -225,6 +235,7 @@ impl Store {
 
     fn update_thread(
         &self,
+        scope: Option<&str>,
         thread_id: &str,
         update: impl FnOnce(&mut Thread, DateTime<Utc>),
     ) -> Result<Thread> {
@@ -234,7 +245,7 @@ impl Store {
         }
         let _guard = self.lock.lock().expect("comment store lock poisoned");
         let mut file = self.load()?;
-        let branch = self.branch();
+        let branch = self.branch(scope);
         for thread in &mut file.threads {
             if thread.id != thread_id || thread.branch != branch {
                 continue;
@@ -526,14 +537,17 @@ mod tests {
         let store = Store::new(dir.path()).unwrap();
 
         let thread = store
-            .add_thread(AddThreadInput {
-                path: "web/src/App.tsx".into(),
-                line: 42,
-                end_line: 45,
-                side: "additions".into(),
-                body: "Check this".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "web/src/App.tsx".into(),
+                    line: 42,
+                    end_line: 45,
+                    side: "additions".into(),
+                    body: "Check this".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         assert!(!thread.id.is_empty());
         assert_eq!(thread.provider, "local");
@@ -550,6 +564,7 @@ mod tests {
 
         let thread = store
             .add_reply(
+                None,
                 &thread.id,
                 AddReplyInput {
                     body: "Reply".into(),
@@ -561,11 +576,11 @@ mod tests {
         assert_eq!(thread.comments[1].body, "Reply");
         assert_eq!(thread.comments[1].author, "agent");
 
-        assert_eq!(store.resolve(&thread.id).unwrap().status, "resolved");
-        assert_eq!(store.reopen(&thread.id).unwrap().status, "open");
+        assert_eq!(store.resolve(None, &thread.id).unwrap().status, "resolved");
+        assert_eq!(store.reopen(None, &thread.id).unwrap().status, "open");
 
-        store.delete(&thread.id).unwrap();
-        assert!(store.list().unwrap().is_empty());
+        store.delete(None, &thread.id).unwrap();
+        assert!(store.list(None).unwrap().is_empty());
     }
 
     #[test]
@@ -573,25 +588,31 @@ mod tests {
         let dir = new_repo();
         let store = Store::new(dir.path()).unwrap();
         store
-            .add_thread(AddThreadInput {
-                path: "a.go".into(),
-                line: 1,
-                body: "main".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "a.go".into(),
+                    line: 1,
+                    body: "main".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
 
         run_git(dir.path(), &["checkout", "-b", "feature/comments"]);
         store
-            .add_thread(AddThreadInput {
-                path: "b.go".into(),
-                line: 1,
-                body: "feature".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "b.go".into(),
+                    line: 1,
+                    body: "feature".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
 
-        let threads = store.list().unwrap();
+        let threads = store.list(None).unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].path, "b.go");
     }
@@ -601,12 +622,15 @@ mod tests {
         let dir = new_repo();
         let store = Store::new(dir.path()).unwrap();
         let thread = store
-            .add_thread(AddThreadInput {
-                path: "a.go".into(),
-                line: 1,
-                body: "main".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "a.go".into(),
+                    line: 1,
+                    body: "main".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         assert_eq!(thread.branch, "main");
 
@@ -614,11 +638,11 @@ mod tests {
         // must not touch a different branch's threads.
         run_git(dir.path(), &["checkout", "-b", "feature/comments"]);
         assert!(matches!(
-            store.delete(&thread.id).unwrap_err(),
+            store.delete(None, &thread.id).unwrap_err(),
             CommentError::NotFound
         ));
         assert!(matches!(
-            store.resolve(&thread.id).unwrap_err(),
+            store.resolve(None, &thread.id).unwrap_err(),
             CommentError::NotFound
         ));
 
@@ -626,7 +650,7 @@ mod tests {
         // `main` is unborn here (no commit), so re-point HEAD via symbolic-ref;
         // `checkout` would fail on a ref that never existed.
         run_git(dir.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
-        let listed = store.list().unwrap();
+        let listed = store.list(None).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, thread.id);
 
@@ -642,17 +666,51 @@ mod tests {
         let dir = new_repo();
         let store = Store::new(dir.path()).unwrap();
         let thread = store
-            .add_thread(AddThreadInput {
-                path: "a.go".into(),
-                line: 1,
-                body: "main".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "a.go".into(),
+                    line: 1,
+                    body: "main".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
 
         run_git(dir.path(), &["checkout", "-b", "feature/comments"]);
-        let err = store.resolve(&thread.id).unwrap_err();
+        let err = store.resolve(None, &thread.id).unwrap_err();
         assert!(matches!(err, CommentError::NotFound));
+    }
+
+    #[test]
+    fn explicit_scope_overrides_checked_out_branch() {
+        let dir = new_repo();
+        let store = Store::new(dir.path()).unwrap();
+        // Checked out on main, reviewing feature/x: the thread belongs to it.
+        let thread = store
+            .add_thread(
+                Some("feature/x"),
+                AddThreadInput {
+                    path: "a.go".into(),
+                    line: 1,
+                    body: "on feature".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(thread.branch, "feature/x");
+        assert!(store.list(None).unwrap().is_empty());
+        assert_eq!(store.list(Some("feature/x")).unwrap().len(), 1);
+        assert!(matches!(
+            store.resolve(None, &thread.id).unwrap_err(),
+            CommentError::NotFound
+        ));
+        assert_eq!(
+            store.resolve(Some("feature/x"), &thread.id).unwrap().status,
+            "resolved"
+        );
+        store.delete(Some("feature/x"), &thread.id).unwrap();
+        assert!(store.list(Some("feature/x")).unwrap().is_empty());
     }
 
     #[test]
@@ -665,17 +723,20 @@ mod tests {
                 let store = store.clone();
                 scope.spawn(move || {
                     store
-                        .add_thread(AddThreadInput {
-                            path: format!("file-{i:02}.go"),
-                            line: 1,
-                            body: "body".into(),
-                            ..Default::default()
-                        })
+                        .add_thread(
+                            None,
+                            AddThreadInput {
+                                path: format!("file-{i:02}.go"),
+                                line: 1,
+                                body: "body".into(),
+                                ..Default::default()
+                            },
+                        )
                         .unwrap();
                 });
             }
         });
-        assert_eq!(store.list().unwrap().len(), COUNT);
+        assert_eq!(store.list(None).unwrap().len(), COUNT);
     }
 
     #[test]
@@ -683,13 +744,16 @@ mod tests {
         let dir = new_repo();
         let store = Store::new(dir.path()).unwrap();
         let thread = store
-            .add_thread(AddThreadInput {
-                path: "a.go".into(),
-                line: 1,
-                body: "b".into(),
-                author: "  carol  ".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "a.go".into(),
+                    line: 1,
+                    body: "b".into(),
+                    author: "  carol  ".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         assert_eq!(thread.comments[0].author, "carol");
     }
@@ -699,17 +763,20 @@ mod tests {
         let dir = new_repo();
         let store = Store::new(dir.path()).unwrap();
         let created = store
-            .add_thread(AddThreadInput {
-                path: "a.go".into(),
-                line: 1,
-                body: "b".into(),
-                ..Default::default()
-            })
+            .add_thread(
+                None,
+                AddThreadInput {
+                    path: "a.go".into(),
+                    line: 1,
+                    body: "b".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap();
 
         // Re-open the store and reload from disk: timestamps must survive the
         // JSON (RFC3339) serialize/parse cycle exactly.
-        let reloaded = Store::new(dir.path()).unwrap().list().unwrap();
+        let reloaded = Store::new(dir.path()).unwrap().list(None).unwrap();
         assert_eq!(reloaded.len(), 1);
         assert_eq!(reloaded[0].created_at, created.created_at);
         assert_eq!(reloaded[0].updated_at, created.updated_at);

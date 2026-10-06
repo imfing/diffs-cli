@@ -43,11 +43,12 @@ diffs pr 123                # PR in the current repo
 diffs pr org/repo/pull/123  # PR in any repo
 ```
 
-Review the current branch against a base locally:
+Review a branch against a base locally (the current branch unless a head is given):
 
 ```sh
 diffs branch          # infers the base
 diffs branch main     # explicit base
+diffs branch main feature  # compare two branches without checking out either
 diffs branch --include-dirty  # include staged, unstaged, and untracked changes
 ```
 

@@ -81,7 +81,7 @@ export function NotFound() {
       codeLabel="Available routes"
       code={`/
 /local
-/branch?base=<ref>
+/branch?base=<ref>[&head=<ref>]
 /:org/:repo/pull/:number`}
     >
       <p className="text-xs font-medium uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
