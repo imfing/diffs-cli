@@ -408,9 +408,12 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   // A newly active guide always starts at step 1, however it became active
   // (toggle, link, back/forward) and even when its detail is already cached.
-  useEffect(() => {
+  // Reset during render rather than in an effect to avoid a stale-step frame.
+  const [stepGuideSlug, setStepGuideSlug] = useState(activeGuideSlug);
+  if (stepGuideSlug !== activeGuideSlug) {
+    setStepGuideSlug(activeGuideSlug);
     setCurrentStepIndex(0);
-  }, [activeGuideSlug]);
+  }
 
   const isLocal = source === "local";
   const isBranch = source === "branch";

@@ -38,7 +38,9 @@ export function GuideRedirect() {
   if (failed) return <Navigate to="/" replace />;
   if (!resolved) {
     return (
-      <div className="flex h-dvh items-center justify-center text-neutral-500">Loading guide...</div>
+      <div className="flex h-dvh items-center justify-center text-neutral-500">
+        Loading guide...
+      </div>
     );
   }
   // Hand the already-fetched guide to DiffView via router state so it doesn't

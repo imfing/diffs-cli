@@ -445,7 +445,7 @@ export function DiffToolbar({
                 {guideMode && <IconCheck className="ml-auto" />}
               </DropdownMenuItem>
             )}
-                        {links.map(([href, kind]) => {
+            {links.map(([href, kind]) => {
               if (!href) return null;
               const [Icon, label] = linkMeta[kind];
               const external = !href.startsWith("/");

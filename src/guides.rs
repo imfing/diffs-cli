@@ -765,7 +765,10 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(err.to_string().contains("not part of the current diff"), "{err}");
+        assert!(
+            err.to_string().contains("not part of the current diff"),
+            "{err}"
+        );
     }
 
     #[test]

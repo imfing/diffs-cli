@@ -888,12 +888,7 @@ fn run_guide(dir: &PathBuf, command: GuideCommand) -> anyhow::Result<()> {
                 } else {
                     println!("\nID\tTITLE\tFILES");
                     for step in &guide.steps {
-                        println!(
-                            "{}\t{}\t{}",
-                            step.id,
-                            step.title,
-                            step.files.join(", ")
-                        );
+                        println!("{}\t{}\t{}", step.id, step.title, step.files.join(", "));
                     }
                 }
                 let _ = io::stdout().flush();
@@ -904,10 +899,12 @@ fn run_guide(dir: &PathBuf, command: GuideCommand) -> anyhow::Result<()> {
                 let text = read_input(&spec)?;
                 let mut parsed: guides::CreateInput = serde_json::from_str(&text)?;
                 // Explicit --slug wins; else JSON's slug if non-empty; else derive from branch.
-                let resolved_slug = store.create_slug(
-                    slug.as_deref()
-                        .or(if parsed.slug.is_empty() { None } else { Some(parsed.slug.as_str()) }),
-                )?;
+                let resolved_slug =
+                    store.create_slug(slug.as_deref().or(if parsed.slug.is_empty() {
+                        None
+                    } else {
+                        Some(parsed.slug.as_str())
+                    }))?;
                 parsed.slug = resolved_slug;
                 parsed
             } else {
@@ -1298,15 +1295,16 @@ mod tests {
         .expect("parse failed");
         let Some(Command::Guide(GuideCommand {
             json: false,
-            command: GuideSubcommand::Steps(GuideStepsCommand {
-                command:
-                    GuideStepsSubcommand::Add {
-                        ref files,
-                        ref title,
-                        ref content,
-                        slug: None,
-                    },
-            }),
+            command:
+                GuideSubcommand::Steps(GuideStepsCommand {
+                    command:
+                        GuideStepsSubcommand::Add {
+                            ref files,
+                            ref title,
+                            ref content,
+                            slug: None,
+                        },
+                }),
         })) = cli.command
         else {
             panic!("unexpected parse result: {:?}", cli.command.map(|_| "some"));
@@ -1318,8 +1316,7 @@ mod tests {
 
     #[test]
     fn guide_list_parses_json_flag() {
-        let cli =
-            Cli::try_parse_from(["diffs", "guide", "--json", "list"]).expect("parse failed");
+        let cli = Cli::try_parse_from(["diffs", "guide", "--json", "list"]).expect("parse failed");
         let Some(Command::Guide(GuideCommand { json: true, .. })) = cli.command else {
             panic!("expected Guide with json=true");
         };
@@ -1330,7 +1327,11 @@ mod tests {
         let cli = Cli::try_parse_from(["diffs", "guide", "create", "--from-json", "-"])
             .expect("parse failed");
         let Some(Command::Guide(GuideCommand {
-            command: GuideSubcommand::Create { from_json: Some(ref spec), .. },
+            command:
+                GuideSubcommand::Create {
+                    from_json: Some(ref spec),
+                    ..
+                },
             ..
         })) = cli.command
         else {

@@ -660,10 +660,7 @@ async fn handle_list_guides(
     }
 }
 
-async fn handle_get_guide(
-    State(state): State<AppState>,
-    Path(slug): Path<String>,
-) -> Response {
+async fn handle_get_guide(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
     let Some(store) = state.guides else {
         return guides_unavailable();
     };
