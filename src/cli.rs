@@ -851,7 +851,7 @@ fn run_guide(dir: &PathBuf, command: GuideCommand) -> anyhow::Result<()> {
     let as_json = command.json;
     match command.command {
         GuideSubcommand::List => {
-            let guide_list = store.list_for_branch()?;
+            let guide_list = store.list_for_branch(None)?;
             if as_json {
                 print_json(&serde_json::json!({ "guides": guide_list }))?;
             } else if guide_list.is_empty() {

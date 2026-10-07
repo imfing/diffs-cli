@@ -430,10 +430,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const prUrl =
     org && repo && number ? `https://${config.githubHost}/${org}/${repo}/pull/${number}` : "";
   const prQuery = hasPr ? new URLSearchParams({ org, repo, number }).toString() : "";
-  // Local threads are scoped to the reviewed branch, not the checked-out one.
-  const localCommentQuery = headRef ? `?branch=${encodeURIComponent(headRef)}` : "";
+  // Local threads and guides are scoped to the reviewed branch, not the checked-out one.
+  const localBranchQuery = headRef ? `?branch=${encodeURIComponent(headRef)}` : "";
   const commentsEndpoint = usesLocalStore
-    ? `/api/comments${localCommentQuery}`
+    ? `/api/comments${localBranchQuery}`
     : hasPr
       ? `/api/comments?${prQuery}`
       : null;
@@ -575,11 +575,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     loadComments();
   }, [loadComments]);
 
-  // Guides are scoped to the local repo's current branch; PR mode has none.
+  // Guides are scoped to the reviewed branch (like local comments); PR mode has none.
   useEffect(() => {
     if (!usesLocalStore) return;
     let ignore = false;
-    apiFetch<{ guides?: GuideSummary[] }>("/api/guides")
+    apiFetch<{ guides?: GuideSummary[] }>(`/api/guides${localBranchQuery}`)
       .then((data) => {
         if (!ignore) setAvailableGuides(data.guides ?? []);
       })
@@ -589,7 +589,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     return () => {
       ignore = true;
     };
-  }, [usesLocalStore]);
+  }, [usesLocalStore, localBranchQuery]);
 
   // The active guide's full detail (steps + files), fetched when the slug
   // changes unless it's already in hand (seeded from the redirect's router
@@ -1154,7 +1154,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         return;
       }
       if (!usesLocalStore) return;
-      apiFetch(`/api/comments/${encodeURIComponent(thread.id)}${localCommentQuery}`, {
+      apiFetch(`/api/comments/${encodeURIComponent(thread.id)}${localBranchQuery}`, {
         method: "DELETE",
       })
         .then(() => {
@@ -1164,7 +1164,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           console.error("Failed to delete comment:", err);
         });
     },
-    [usesLocalStore, localCommentQuery],
+    [usesLocalStore, localBranchQuery],
   );
 
   useEffect(() => {

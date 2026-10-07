@@ -203,9 +203,10 @@ impl Store {
         Ok(summaries)
     }
 
-    /// Guides associated with the current branch (by the stored `branch` field).
-    pub fn list_for_branch(&self) -> Result<Vec<Summary>> {
-        let branch = self.branch();
+    /// Guides associated with `branch` (by the stored `branch` field), or with
+    /// the current branch when `None`.
+    pub fn list_for_branch(&self, branch: Option<&str>) -> Result<Vec<Summary>> {
+        let branch = branch.map_or_else(|| self.branch(), str::to_string);
         Ok(self
             .list_all()?
             .into_iter()
@@ -383,7 +384,7 @@ impl Store {
         if let Some(slug) = slug.map(str::trim).filter(|s| !s.is_empty()) {
             return clean_slug(slug);
         }
-        let mut guides = self.list_for_branch()?;
+        let mut guides = self.list_for_branch(None)?;
         match guides.len() {
             0 => validation("no guide for the current branch; pass --slug"),
             1 => Ok(guides.remove(0).slug),
@@ -897,9 +898,12 @@ mod tests {
             })
             .unwrap();
 
-        let scoped = store.list_for_branch().unwrap();
+        let scoped = store.list_for_branch(None).unwrap();
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].slug, "on-feature");
+        let on_main = store.list_for_branch(Some("main")).unwrap();
+        assert_eq!(on_main.len(), 1);
+        assert_eq!(on_main[0].slug, "on-main");
         assert_eq!(store.list_all().unwrap().len(), 2);
     }
 

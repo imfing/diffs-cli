@@ -640,6 +640,8 @@ async fn handle_pull_file(
 #[derive(Debug, Deserialize)]
 struct GuideListQuery {
     all: Option<String>,
+    /// Scope to this branch instead of the checked-out one.
+    branch: Option<String>,
 }
 
 async fn handle_list_guides(
@@ -649,10 +651,17 @@ async fn handle_list_guides(
     let Some(store) = state.guides else {
         return guides_unavailable();
     };
+    let branch = query.branch.as_deref().map(str::trim).unwrap_or_default();
+    if !branch.is_empty() && !is_safe_ref_arg(branch) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!("invalid branch: {branch:?}"),
+        );
+    }
     let result = if dirty_enabled(query.all.as_deref()) {
         store.list_all()
     } else {
-        store.list_for_branch()
+        store.list_for_branch((!branch.is_empty()).then_some(branch))
     };
     match result {
         Ok(summaries) => (StatusCode::OK, Json(json!({ "guides": summaries }))).into_response(),
