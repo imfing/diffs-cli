@@ -78,6 +78,12 @@ Examples:
   # Compare two branches without checking either out
   diffs branch main feature/login
 
+  # Pick the base from a filterable list (type to filter, Enter to select)
+  diffs branch -i
+
+  # Pick the head to compare against main
+  diffs branch main -i
+
   # Include uncommitted changes
   diffs branch --include-dirty
 ";
@@ -172,6 +178,9 @@ enum Command {
         /// Include staged, unstaged, and untracked changes
         #[arg(long, conflicts_with = "head")]
         include_dirty: bool,
+        /// Pick the base (or, when a base is given, the head) from a filterable list
+        #[arg(short, long, conflicts_with = "head")]
+        interactive: bool,
         #[command(flatten)]
         serve: ServeFlags,
     },
@@ -265,12 +274,18 @@ pub async fn run(started: Instant) -> anyhow::Result<()> {
             base,
             head,
             include_dirty,
+            interactive,
             serve,
         }) => {
             // Fail with the formatted git help before inferring a base, so a
             // non-repo gives the same UX as the local command (not a confusing
             // "could not infer base ref").
             resolve_repo_root_or_help(&cli.dir)?;
+            let (base, head) = if interactive {
+                pick_branch_refs(&cli.dir, base).await?
+            } else {
+                (base, head)
+            };
             let base = resolve_branch_base(base, &cli.dir).await?;
             let head = head
                 .map(|value| value.trim().to_string())
@@ -601,13 +616,19 @@ fn browser_url(addr: SocketAddr, target_path: &str) -> String {
     format!("http://{host}:{}{}", addr.port(), target_path)
 }
 
-async fn resolve_branch_base(base: Option<String>, dir: &PathBuf) -> anyhow::Result<String> {
+async fn resolve_branch_base(base: Option<String>, dir: &Path) -> anyhow::Result<String> {
     if let Some(base) = base
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
         return Ok(base);
     }
+    infer_branch_base(dir).await
+}
+
+/// Infers a base ref from the PR base branch, the repository's default branch,
+/// or finally main/master, preferring a local branch over its remote-tracking ref.
+async fn infer_branch_base(dir: &Path) -> anyhow::Result<String> {
     for args in [
         ["pr", "view", "--json", "baseRefName", "-q", ".baseRefName"],
         [
@@ -631,6 +652,88 @@ async fn resolve_branch_base(base: Option<String>, dir: &PathBuf) -> anyhow::Res
         }
     }
     bail!("could not infer base ref; pass one explicitly, e.g. `diffs branch main`")
+}
+
+/// `--interactive`: fills the missing positional from a fuzzy-filterable list of
+/// local and remote-tracking branches. With no base the picker chooses the base
+/// (the checked-out branch is left out, the inferred base is preselected); with a
+/// base it chooses the head instead (the base is left out, the checked-out branch
+/// is preselected). Esc, q, or Ctrl-C exits 1 without printing anything.
+async fn pick_branch_refs(
+    dir: &Path,
+    base: Option<String>,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        bail!("--interactive needs a terminal; pass the base explicitly, e.g. `diffs branch main`");
+    }
+    let base = base
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let branches = git::list_branches(dir).context("could not list branches")?;
+    let current = git::branch(dir);
+    let current = (!current.is_empty()).then_some(current);
+    match base {
+        None => {
+            let inferred = infer_branch_base(dir).await.ok();
+            let list = picker_list(branches, current.as_deref(), inferred.as_deref());
+            let base = pick_from_list("Base ref", &list)?;
+            Ok((Some(base), None))
+        }
+        Some(base) => {
+            let list = picker_list(branches, Some(&base), current.as_deref());
+            let head = pick_from_list("Head ref", &list)?;
+            Ok((Some(base), Some(head)))
+        }
+    }
+}
+
+struct PickerList {
+    items: Vec<String>,
+    default: usize,
+}
+
+/// Picker entries in `list_branches` order minus `exclude` (comparing a ref
+/// against itself is never useful), with `preferred` highlighted when present.
+fn picker_list(
+    branches: Vec<String>,
+    exclude: Option<&str>,
+    preferred: Option<&str>,
+) -> PickerList {
+    let items: Vec<String> = branches
+        .into_iter()
+        .filter(|name| Some(name.as_str()) != exclude)
+        .collect();
+    let default = preferred
+        .and_then(|preferred| items.iter().position(|name| name == preferred))
+        .unwrap_or(0);
+    PickerList { items, default }
+}
+
+fn pick_from_list(prompt: &str, list: &PickerList) -> anyhow::Result<String> {
+    if list.items.is_empty() {
+        bail!("no branches to pick from");
+    }
+    if !colors_enabled(true) {
+        console::set_colors_enabled(false);
+    }
+    let theme = dialoguer::theme::ColorfulTheme::default();
+    let selection = dialoguer::FuzzySelect::with_theme(&theme)
+        .with_prompt(prompt)
+        .items(&list.items)
+        .default(list.default)
+        .highlight_matches(true)
+        .max_length(12)
+        .interact_opt();
+    match selection {
+        Ok(Some(index)) => Ok(list.items[index].clone()),
+        // Esc or q; dialoguer already cleared the prompt.
+        Ok(None) => Err(QuietExit.into()),
+        // Ctrl-C surfaces as an interrupted read rather than a signal.
+        Err(dialoguer::Error::IO(err)) if err.kind() == io::ErrorKind::Interrupted => {
+            Err(QuietExit.into())
+        }
+        Err(err) => Err(err).context("branch picker failed"),
+    }
 }
 
 fn branch_target(base: &str, head: Option<&str>, include_dirty: bool) -> String {
@@ -816,6 +919,20 @@ mod tests {
             .status()
             .expect("run git");
         assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn picker_list_excludes_ref_and_preselects_preferred() {
+        let branches = || vec!["feature".to_string(), "main".into(), "origin/main".into()];
+        let list = picker_list(branches(), Some("feature"), Some("origin/main"));
+        assert_eq!(list.items, ["main", "origin/main"]);
+        assert_eq!(list.default, 1);
+        // A preferred ref that isn't listed falls back to the first entry.
+        let list = picker_list(branches(), None, Some("missing"));
+        assert_eq!(list.items, ["feature", "main", "origin/main"]);
+        assert_eq!(list.default, 0);
+        let list = picker_list(branches(), None, None);
+        assert_eq!(list.default, 0);
     }
 
     #[test]

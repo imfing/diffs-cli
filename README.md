@@ -49,6 +49,8 @@ Review a branch against a base locally (the current branch unless a head is give
 diffs branch          # infers the base
 diffs branch main     # explicit base
 diffs branch main feature  # compare two branches without checking out either
+diffs branch -i       # pick the base from a filterable list
+diffs branch main -i  # pick the head to compare against main
 diffs branch --include-dirty  # include staged, unstaged, and untracked changes
 ```
 
