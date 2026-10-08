@@ -61,6 +61,7 @@ import { DiffAnnotation } from "./diff-view/DiffAnnotation";
 import { DiffStatusScreen } from "./diff-view/DiffStatusScreen";
 import { DiffToolbar, type ToolbarLink } from "./diff-view/DiffToolbar";
 import { FileActionsMenu } from "./diff-view/FileActionsMenu";
+import { RecentBranches } from "./diff-view/RecentBranches";
 import { ShortcutsDialog } from "./diff-view/ShortcutsDialog";
 import { SidebarTree } from "./diff-view/SidebarTree";
 import type {
@@ -1401,14 +1402,17 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   }
 
   if (files.length === 0) {
+    // Branch view keeps it to one line and lists other branches to try.
     const [emptyTitle, emptyMessage] = isBranch
-      ? ["No commits ahead", `No commits ahead of ${baseRef || "base"}.`]
+      ? [`No commits ahead of ${baseRef || "base"}.`, undefined]
       : isLocal
         ? ["No file changes yet", "The latest diffs are no longer available."]
         : ["No files changed", "This pull request doesn't change any files."];
     return (
       <DiffStatusScreen icon={<IconFileX />} title={emptyTitle} description={emptyMessage}>
-        {branchDiffPath ? (
+        {isBranch && baseRef ? (
+          <RecentBranches base={baseRef} exclude={[baseRef, headLabel]} />
+        ) : branchDiffPath ? (
           <Link to={branchDiffPath} className={buttonVariants({ size: "sm" })}>
             View branch diff
           </Link>

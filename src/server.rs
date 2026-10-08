@@ -91,6 +91,8 @@ struct RepoContextResponse {
 #[serde(rename_all = "camelCase")]
 struct BranchesResponse {
     branches: Vec<String>,
+    /// Local branches by most recent commit, newest first.
+    recent: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,11 +322,24 @@ async fn handle_branch_diff(
     }
 }
 
-async fn handle_branches(State(state): State<AppState>) -> Response {
-    match git::list_branches(&state.cwd) {
-        Ok(branches) => (StatusCode::OK, Json(BranchesResponse { branches })).into_response(),
-        Err(err) => error(StatusCode::BAD_GATEWAY, err),
-    }
+#[derive(Debug, Deserialize)]
+struct BranchesQuery {
+    /// How many recently committed local branches to include (default 5).
+    recent: Option<usize>,
+}
+
+async fn handle_branches(
+    State(state): State<AppState>,
+    Query(query): Query<BranchesQuery>,
+) -> Response {
+    let branches = match git::list_branches(&state.cwd) {
+        Ok(branches) => branches,
+        Err(err) => return error(StatusCode::BAD_GATEWAY, err),
+    };
+    // Ordering is a convenience; never fail the whole list over it.
+    let limit = query.recent.unwrap_or(5).min(50);
+    let recent = git::recent_branches(&state.cwd, limit).unwrap_or_default();
+    (StatusCode::OK, Json(BranchesResponse { branches, recent })).into_response()
 }
 
 async fn handle_repo_context(State(state): State<AppState>) -> impl IntoResponse {
