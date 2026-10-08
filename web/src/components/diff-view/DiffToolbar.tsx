@@ -32,7 +32,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiFetch } from "@/lib/api";
 import type { AppConfig, DiffSettingsProps, PullRequestInfo } from "./types";
-import { displayLocalPath, headerIconButtonClass } from "./helpers";
+import { branchDiffHref, displayLocalPath, headerIconButtonClass } from "./helpers";
 
 const DiffSettingsPopover = lazy(() =>
   import("./DiffSettingsPopover").then((m) => ({ default: m.DiffSettingsPopover })),
@@ -71,15 +71,6 @@ function BranchChip({ label, title }: { label: string; title: string }) {
       <span className="truncate">{label}</span>
     </span>
   );
-}
-
-// An empty head means the checked-out branch; dirty changes only apply there.
-function branchDiffHref(base: string, head: string, includeDirty: boolean) {
-  const params = new URLSearchParams();
-  params.set("base", base);
-  if (head) params.set("head", head);
-  else if (includeDirty) params.set("dirty", "1");
-  return `/branch?${params.toString()}`;
 }
 
 function BranchSwitcher({

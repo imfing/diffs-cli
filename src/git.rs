@@ -162,6 +162,30 @@ pub fn list_branches(cwd: impl AsRef<Path>) -> Result<Vec<String>> {
     Ok(names.into_iter().collect())
 }
 
+/// Local branches ordered by most recent commit, newest first. Backs the
+/// "recent branches" shortcuts shown when a branch diff is empty.
+pub fn recent_branches(cwd: impl AsRef<Path>, limit: usize) -> Result<Vec<String>> {
+    let repo = discover(cwd)?;
+    let mut dated = Vec::new();
+    for entry in repo.branches(Some(BranchType::Local))? {
+        let (branch, _) = entry?;
+        let Some(name) = branch.name()?.filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        let Ok(commit) = branch.get().peel_to_commit() else {
+            continue;
+        };
+        dated.push((commit.time().seconds(), name.to_string()));
+    }
+    // Newest first; ties fall back to name so the order is stable.
+    dated.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(dated
+        .into_iter()
+        .take(limit)
+        .map(|(_, name)| name)
+        .collect())
+}
+
 pub fn remote_url(cwd: impl AsRef<Path>, remote: &str) -> Result<String> {
     let repo = discover(cwd)?;
     Ok(repo
@@ -544,6 +568,34 @@ mod tests {
             !names.iter().any(|name| name.ends_with("/HEAD")),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn recent_branches_orders_by_commit_date_and_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "user.email", "diffs@example.com"]);
+        git(root, &["config", "user.name", "Diffs Test"]);
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-m", "initial"]);
+        // `old` shares main's tip; `newer` gets a strictly later commit.
+        git(root, &["branch", "old"]);
+        git(root, &["checkout", "-q", "-b", "newer"]);
+        fs::write(root.join("b.txt"), "b\n").unwrap();
+        git(root, &["add", "."]);
+        let status = Command::new("git")
+            .args(["commit", "-m", "later"])
+            .env("GIT_AUTHOR_DATE", "2030-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2030-01-01T00:00:00Z")
+            .current_dir(root)
+            .status()
+            .expect("run git commit");
+        assert!(status.success());
+
+        assert_eq!(recent_branches(root, 10).unwrap(), ["newer", "main", "old"]);
+        assert_eq!(recent_branches(root, 1).unwrap(), ["newer"]);
     }
 
     #[test]

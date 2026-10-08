@@ -61,6 +61,15 @@ function fileExtension(name: string): string {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
 }
 
+// An empty head means the checked-out branch; dirty changes only apply there.
+export function branchDiffHref(base: string, head: string, includeDirty: boolean) {
+  const params = new URLSearchParams();
+  params.set("base", base);
+  if (head) params.set("head", head);
+  else if (includeDirty) params.set("dirty", "1");
+  return `/branch?${params.toString()}`;
+}
+
 export function sortFiles(
   files: readonly FileDiffMetadata[],
   orderBy: DiffOrderBy,

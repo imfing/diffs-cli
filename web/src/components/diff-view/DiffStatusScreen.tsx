@@ -16,7 +16,7 @@ export function DiffStatusScreen({
 }: {
   icon: ReactNode;
   title: string;
-  description: string;
+  description?: string;
   children?: ReactNode;
 }) {
   return (
@@ -25,7 +25,7 @@ export function DiffStatusScreen({
         <EmptyHeader>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
-          <EmptyDescription>{description}</EmptyDescription>
+          {description != null && <EmptyDescription>{description}</EmptyDescription>}
         </EmptyHeader>
         {children != null && <EmptyContent>{children}</EmptyContent>}
       </Empty>
