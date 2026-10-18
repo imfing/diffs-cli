@@ -108,6 +108,10 @@ const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
 // A pinned file header sits a few px below the scroll area's top; the next file's
 // header is at least a header height lower until it's scrolled to.
 const CURRENT_FILE_HEADER_SLOP_PX = 24;
+// `j`/`k` step, about three diff lines.
+const SCROLL_STEP_PX = 60;
+// Max gap between the two presses of `gg`.
+const KEY_SEQUENCE_MS = 500;
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 
 type Viewer = CodeViewHandle<AnnotationMeta, undefined>;
@@ -357,6 +361,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const programmaticScrollAtRef = useRef(0);
   // File to scroll to once CodeView remounts, in place of the saved scroll offset.
   const pendingScrollFileRef = useRef<string | null>(null);
+  const lastGKeyAtRef = useRef(0);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
@@ -937,6 +942,33 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         e.preventDefault();
         toggleCurrentFileCollapsed();
         break;
+    }
+    // Vim-style scrolling; `d`/`u` follow Vimium since Ctrl-d/u belong to the browser.
+    const scrollEl = codeViewAreaRef.current?.firstElementChild as HTMLElement | null;
+    if (!scrollEl) return;
+    // Smooth for single presses; instant on key repeat so holding the key doesn't lag.
+    const behavior: ScrollBehavior = e.repeat ? "instant" : "smooth";
+    const halfPage = scrollEl.clientHeight / 2;
+    const deltas: Record<string, number> = {
+      j: SCROLL_STEP_PX,
+      k: -SCROLL_STEP_PX,
+      d: halfPage,
+      u: -halfPage,
+    };
+    if (e.key in deltas) {
+      e.preventDefault();
+      scrollEl.scrollBy({ top: deltas[e.key], behavior });
+    } else if (e.key === "G") {
+      e.preventDefault();
+      scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior });
+    } else if (e.key === "g") {
+      e.preventDefault();
+      if (e.timeStamp - lastGKeyAtRef.current < KEY_SEQUENCE_MS) {
+        lastGKeyAtRef.current = 0;
+        scrollEl.scrollTo({ top: 0, behavior });
+      } else {
+        lastGKeyAtRef.current = e.timeStamp;
+      }
     }
   });
   useEffect(() => {

@@ -6,6 +6,9 @@ import { Kbd, KbdGroup } from "@/components/ui/kbd";
 type Shortcut = { keys: string[]; label: string };
 
 const NAV_SHORTCUTS: Shortcut[] = [
+  { keys: ["j", "k"], label: "Scroll down / up" },
+  { keys: ["d", "u"], label: "Half page down / up" },
+  { keys: ["gg", "G"], label: "Top / bottom" },
   { keys: ["n"], label: "Next file" },
   { keys: ["p"], label: "Previous file" },
   { keys: ["r"], label: "Mark file as reviewed" },
