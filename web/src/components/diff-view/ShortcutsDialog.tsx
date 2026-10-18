@@ -8,7 +8,7 @@ type Shortcut = { keys: string[]; label: string };
 const NAV_SHORTCUTS: Shortcut[] = [
   { keys: ["n"], label: "Next file" },
   { keys: ["p"], label: "Previous file" },
-  { keys: ["m"], label: "Mark file as reviewed" },
+  { keys: ["r"], label: "Mark file as reviewed" },
   { keys: ["?"], label: "Toggle this help" },
 ];
 

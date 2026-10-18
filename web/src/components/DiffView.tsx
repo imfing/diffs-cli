@@ -908,7 +908,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         e.preventDefault();
         navigateFile(-1);
         break;
-      case "m":
+      case "r":
+      case "m": // Undocumented alias, kept for existing muscle memory.
         e.preventDefault();
         reviewCurrentFile();
         break;
@@ -1348,7 +1349,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       return (
         <div className="flex items-center gap-1" data-diff-file={item.fileDiff.name}>
           <label
-            title="Mark file as reviewed (collapses it) · shortcut: m"
+            title="Mark file as reviewed (collapses it) · shortcut: r"
             className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition-colors ${
               isReviewed
                 ? "text-green-600 dark:text-green-400"
