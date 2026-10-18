@@ -9,6 +9,7 @@ const NAV_SHORTCUTS: Shortcut[] = [
   { keys: ["n"], label: "Next file" },
   { keys: ["p"], label: "Previous file" },
   { keys: ["r"], label: "Mark file as reviewed" },
+  { keys: ["o"], label: "Expand or collapse file" },
   { keys: ["?"], label: "Toggle this help" },
 ];
 

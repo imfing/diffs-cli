@@ -752,6 +752,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [scrollStorageKey, codeViewKey, getCurrentFile, scrollToFile]);
+  // For scrolls right after a collapse/expand: wait for re-measure, or the target offset is stale.
+  const scrollToFileAfterLayout = useCallback(
+    (path: string) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => scrollToFile(path, "instant"));
+      });
+    },
+    [scrollToFile],
+  );
   const scrollToThread = useCallback(
     (thread: ReviewThread) => {
       const itemId = filePathToItemId.get(thread.path);
@@ -789,13 +798,18 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       const nextCollapsed = !item.collapsed;
       patchItem(viewer!, item, { collapsed: nextCollapsed });
       if (item.type === "diff" && item.fileDiff) {
+        const name = item.fileDiff.name;
+        const sig = fileSignatures.get(name);
+        // Reviewed state already collapses the file; recording it as manual too would
+        // keep it collapsed after it's un-marked.
+        const isReviewed = sig != null && reviewed.map.get(name) === sig;
         const stored = readCollapsedPaths(collapsedStorageKey);
-        if (nextCollapsed) stored.add(item.fileDiff.name);
-        else stored.delete(item.fileDiff.name);
+        if (nextCollapsed && !isReviewed) stored.add(name);
+        else stored.delete(name);
         persistCollapsedPaths(collapsedStorageKey, stored);
       }
     },
-    [collapsedStorageKey],
+    [collapsedStorageKey, fileSignatures, reviewed],
   );
   const toggleAllFilesCollapsed = useCallback(() => {
     const next = !allCollapsed;
@@ -870,10 +884,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       // Hiding remounts CodeView; the scroll-restore effect scrolls once it's mounted.
       pendingScrollFileRef.current = next.name;
     } else {
-      // Wait for the collapse to re-measure, or the target offset is stale.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => scrollToFile(next.name, "instant"));
-      });
+      scrollToFileAfterLayout(next.name);
     }
   }, [
     getCurrentFile,
@@ -883,8 +894,17 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     fileSignatures,
     reviewed,
     visibleFiles,
-    scrollToFile,
+    scrollToFileAfterLayout,
   ]);
+  const toggleCurrentFileCollapsed = useCallback(() => {
+    const current = currentFileRef.current ?? getCurrentFile();
+    if (current == null) return;
+    const itemId = filePathToItemId.get(current);
+    if (itemId == null) return;
+    toggleFileCollapsed(itemId);
+    // Collapsing mid-file would otherwise leave the viewport on a later file.
+    scrollToFileAfterLayout(current);
+  }, [getCurrentFile, filePathToItemId, toggleFileCollapsed, scrollToFileAfterLayout]);
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // The editor lives in shadow DOM, so the target check below misses it.
@@ -912,6 +932,10 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       case "m": // Undocumented alias, kept for existing muscle memory.
         e.preventDefault();
         reviewCurrentFile();
+        break;
+      case "o":
+        e.preventDefault();
+        toggleCurrentFileCollapsed();
         break;
     }
   });
@@ -1313,7 +1337,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               </button>
             }
           />
-          <TooltipContent>{isCollapsed ? "Expand file" : "Collapse file"}</TooltipContent>
+          <TooltipContent>
+            {isCollapsed ? "Expand file" : "Collapse file"} · shortcut: o
+          </TooltipContent>
         </Tooltip>
       );
     },
