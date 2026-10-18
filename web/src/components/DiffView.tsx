@@ -105,6 +105,9 @@ const codeViewStyle = {
 
 // Window after a programmatic scroll during which the cursor isn't re-synced.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
+// A pinned file header sits a few px below the scroll area's top; the next file's
+// header is at least a header height lower until it's scrolled to.
+const CURRENT_FILE_HEADER_SLOP_PX = 24;
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 
 type Viewer = CodeViewHandle<AnnotationMeta, undefined>;
@@ -352,6 +355,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
   const currentFileRef = useRef<string | null>(null);
   const programmaticScrollAtRef = useRef(0);
+  // File to scroll to once CodeView remounts, in place of the saved scroll offset.
+  const pendingScrollFileRef = useRef<string | null>(null);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
@@ -679,11 +684,27 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     const areaTop = area.getBoundingClientRect().top;
     let current = headers[0].getAttribute("data-diff-file");
     for (let i = 1; i < headers.length; i++) {
-      if (headers[i].getBoundingClientRect().top - areaTop > 8) break;
+      if (headers[i].getBoundingClientRect().top - areaTop > CURRENT_FILE_HEADER_SLOP_PX) break;
       current = headers[i].getAttribute("data-diff-file");
     }
     return current;
   }, []);
+  const scrollToFile = useCallback(
+    (path: string, behavior: CodeViewScrollBehavior = "smooth-auto") => {
+      const itemId = filePathToItemId.get(path);
+      if (itemId == null) return;
+      currentFileRef.current = path;
+      programmaticScrollAtRef.current = Date.now();
+      viewerRef.current?.scrollTo({
+        type: "item",
+        id: itemId,
+        align: "start",
+        behavior,
+      });
+      setMobileSidebarOpen(false);
+    },
+    [filePathToItemId],
+  );
   useEffect(() => {
     const area = codeViewAreaRef.current;
     if (!area) return;
@@ -708,17 +729,21 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     };
     area.addEventListener("scroll", handleScroll, { capture: true, passive: true });
 
-    const saved = sessionStorage.getItem(scrollStorageKey);
-    if (saved) {
-      const target = parseInt(saved, 10);
-      if (target > 0) {
+    // A pending file wins: after hiding a reviewed file the saved offset points elsewhere.
+    const pendingFile = pendingScrollFileRef.current;
+    pendingScrollFileRef.current = null;
+    const saved = parseInt(sessionStorage.getItem(scrollStorageKey) ?? "", 10);
+    if (pendingFile != null || saved > 0) {
+      requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            const scrollEl = area.firstElementChild as HTMLElement;
-            if (scrollEl) scrollEl.scrollTop = target;
-          });
+          if (pendingFile != null) {
+            scrollToFile(pendingFile, "instant");
+            return;
+          }
+          const scrollEl = area.firstElementChild as HTMLElement;
+          if (scrollEl) scrollEl.scrollTop = saved;
         });
-      }
+      });
     }
 
     return () => {
@@ -726,23 +751,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       if (timer) clearTimeout(timer);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [scrollStorageKey, codeViewKey, getCurrentFile]);
-  const scrollToFile = useCallback(
-    (path: string, behavior: CodeViewScrollBehavior = "smooth-auto") => {
-      const itemId = filePathToItemId.get(path);
-      if (itemId == null) return;
-      currentFileRef.current = path;
-      programmaticScrollAtRef.current = Date.now();
-      viewerRef.current?.scrollTo({
-        type: "item",
-        id: itemId,
-        align: "start",
-        behavior,
-      });
-      setMobileSidebarOpen(false);
-    },
-    [filePathToItemId],
-  );
+  }, [scrollStorageKey, codeViewKey, getCurrentFile, scrollToFile]);
   const scrollToThread = useCallback(
     (thread: ReviewThread) => {
       const itemId = filePathToItemId.get(thread.path);
@@ -847,17 +856,25 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     if (current == null) return;
     const itemId = filePathToItemId.get(current);
     if (itemId == null) return;
-    // Marking hides the file when "hide reviewed" is on; pre-advance the cursor.
-    if (hideReviewed) {
-      const sig = fileSignatures.get(current);
-      const willHide = sig != null && reviewed.map.get(current) !== sig;
-      if (willHide) {
-        const idx = visibleFiles.findIndex((f) => f.name === current);
-        const next = visibleFiles[idx + 1] ?? visibleFiles[idx - 1];
-        currentFileRef.current = next?.name ?? null;
-      }
-    }
+    const sig = fileSignatures.get(current);
+    const marking = sig != null && reviewed.map.get(current) !== sig;
     toggleReviewed(itemId);
+    if (!marking) return;
+    // Advance to the next file; on the last file, stay on it (or step back if it gets hidden).
+    const idx = visibleFiles.findIndex((f) => f.name === current);
+    const next =
+      visibleFiles[idx + 1] ?? (hideReviewed ? visibleFiles[idx - 1] : visibleFiles[idx]);
+    if (next == null) return;
+    currentFileRef.current = next.name;
+    if (hideReviewed) {
+      // Hiding remounts CodeView; the scroll-restore effect scrolls once it's mounted.
+      pendingScrollFileRef.current = next.name;
+    } else {
+      // Wait for the collapse to re-measure, or the target offset is stale.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => scrollToFile(next.name, "instant"));
+      });
+    }
   }, [
     getCurrentFile,
     filePathToItemId,
@@ -866,6 +883,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     fileSignatures,
     reviewed,
     visibleFiles,
+    scrollToFile,
   ]);
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
