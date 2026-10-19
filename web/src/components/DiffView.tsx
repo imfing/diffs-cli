@@ -105,7 +105,18 @@ const codeViewStyle = {
 
 // Window after a programmatic scroll during which the cursor isn't re-synced.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
+// Pinned header sits a few px below the top; the next header is a full header height lower.
+const CURRENT_FILE_HEADER_SLOP_PX = 24;
+const SCROLL_STEP_PX = 60;
+const GG_TIMEOUT_MS = 500;
+const SCROLL_RESTORE_TIMEOUT_MS = 3000;
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
+const EMPTY_SET: ReadonlySet<string> = new Set();
+
+// Double rAF: let CodeView re-measure after a collapse/expand/remount, or scroll offsets are stale.
+function afterLayout(fn: () => void) {
+  requestAnimationFrame(() => requestAnimationFrame(fn));
+}
 
 type Viewer = CodeViewHandle<AnnotationMeta, undefined>;
 type Item = CodeViewItem<AnnotationMeta>;
@@ -350,8 +361,11 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
   const pendingDiffReloadRef = useRef(false);
   const reloadDiffRef = useRef<(() => void) | null>(null);
   const codeViewAreaRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const currentFileRef = useRef<string | null>(null);
   const programmaticScrollAtRef = useRef(0);
+  const pendingScrollFileRef = useRef<string | null>(null);
+  const lastGKeyAtRef = useRef(0);
   const [commentThreads, setCommentThreads] = useState<ReviewThread[]>([]);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
@@ -599,7 +613,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     return names;
   }, [files, fileSignatures, reviewed]);
   const hiddenReviewedNames = useMemo(
-    () => (hideReviewed ? reviewedNames : new Set<string>()),
+    () => (hideReviewed ? reviewedNames : EMPTY_SET),
     [hideReviewed, reviewedNames],
   );
   const visibleFiles = useMemo(
@@ -679,11 +693,28 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     const areaTop = area.getBoundingClientRect().top;
     let current = headers[0].getAttribute("data-diff-file");
     for (let i = 1; i < headers.length; i++) {
-      if (headers[i].getBoundingClientRect().top - areaTop > 8) break;
+      if (headers[i].getBoundingClientRect().top - areaTop > CURRENT_FILE_HEADER_SLOP_PX) break;
       current = headers[i].getAttribute("data-diff-file");
     }
     return current;
   }, []);
+  const scrollToFile = useCallback(
+    (path: string, behavior: CodeViewScrollBehavior = "smooth-auto") => {
+      const itemId = filePathToItemId.get(path);
+      if (itemId == null) return;
+      currentFileRef.current = path;
+      programmaticScrollAtRef.current = Date.now();
+      viewerRef.current?.scrollTo({
+        type: "item",
+        id: itemId,
+        align: "start",
+        behavior,
+      });
+      setMobileSidebarOpen(false);
+    },
+    [filePathToItemId],
+  );
+  const scrollToPendingFile = useEffectEvent((path: string) => scrollToFile(path, "instant"));
   useEffect(() => {
     const area = codeViewAreaRef.current;
     if (!area) return;
@@ -708,41 +739,35 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     };
     area.addEventListener("scroll", handleScroll, { capture: true, passive: true });
 
-    const saved = sessionStorage.getItem(scrollStorageKey);
-    if (saved) {
-      const target = parseInt(saved, 10);
-      if (target > 0) {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            const scrollEl = area.firstElementChild as HTMLElement;
-            if (scrollEl) scrollEl.scrollTop = target;
-          });
-        });
-      }
+    const pendingFile = pendingScrollFileRef.current;
+    pendingScrollFileRef.current = null;
+    const saved = parseInt(sessionStorage.getItem(scrollStorageKey) ?? "", 10);
+    let restoreRafId = 0;
+    if (pendingFile != null) {
+      afterLayout(() => scrollToPendingFile(pendingFile));
+    } else if (saved > 0) {
+      // CodeView lays out its content some frames after mount; restoring earlier clamps to 0.
+      const deadline = performance.now() + SCROLL_RESTORE_TIMEOUT_MS;
+      const restore = () => {
+        const el = scrollContainerRef.current;
+        if (el?.scrollTop) return; // The user scrolled first.
+        const fits = el != null && el.scrollHeight - el.clientHeight >= saved;
+        if (fits || performance.now() > deadline) {
+          if (el) el.scrollTop = saved;
+        } else {
+          restoreRafId = requestAnimationFrame(restore);
+        }
+      };
+      restoreRafId = requestAnimationFrame(restore);
     }
 
     return () => {
       area.removeEventListener("scroll", handleScroll, { capture: true });
       if (timer) clearTimeout(timer);
       if (rafId) cancelAnimationFrame(rafId);
+      if (restoreRafId) cancelAnimationFrame(restoreRafId);
     };
   }, [scrollStorageKey, codeViewKey, getCurrentFile]);
-  const scrollToFile = useCallback(
-    (path: string, behavior: CodeViewScrollBehavior = "smooth-auto") => {
-      const itemId = filePathToItemId.get(path);
-      if (itemId == null) return;
-      currentFileRef.current = path;
-      programmaticScrollAtRef.current = Date.now();
-      viewerRef.current?.scrollTo({
-        type: "item",
-        id: itemId,
-        align: "start",
-        behavior,
-      });
-      setMobileSidebarOpen(false);
-    },
-    [filePathToItemId],
-  );
   const scrollToThread = useCallback(
     (thread: ReviewThread) => {
       const itemId = filePathToItemId.get(thread.path);
@@ -780,13 +805,15 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       const nextCollapsed = !item.collapsed;
       patchItem(viewer!, item, { collapsed: nextCollapsed });
       if (item.type === "diff" && item.fileDiff) {
+        const name = item.fileDiff.name;
         const stored = readCollapsedPaths(collapsedStorageKey);
-        if (nextCollapsed) stored.add(item.fileDiff.name);
-        else stored.delete(item.fileDiff.name);
+        // Reviewed files auto-collapse; storing them as manual would keep them collapsed after un-marking.
+        if (nextCollapsed && !reviewedNames.has(name)) stored.add(name);
+        else stored.delete(name);
         persistCollapsedPaths(collapsedStorageKey, stored);
       }
     },
-    [collapsedStorageKey],
+    [collapsedStorageKey, reviewedNames],
   );
   const toggleAllFilesCollapsed = useCallback(() => {
     const next = !allCollapsed;
@@ -804,7 +831,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     persistCollapsedPaths(collapsedStorageKey, collapsedPaths);
   }, [allCollapsed, initialItems, collapsedStorageKey]);
   const toggleReviewed = useCallback(
-    (itemId: string) => {
+    (itemId: string): boolean | undefined => {
       const viewer = viewerRef.current;
       const item = viewer?.getItem(itemId);
       if (item == null || item.type !== "diff" || !item.fileDiff) return;
@@ -828,6 +855,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
           collapseRemovals,
         ),
       });
+      return nextReviewed;
     },
     [fileSignatures, reviewed, reviewedStorageKey, collapsedStorageKey, collapseRemovals],
   );
@@ -846,27 +874,27 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     const current = currentFileRef.current ?? getCurrentFile();
     if (current == null) return;
     const itemId = filePathToItemId.get(current);
-    if (itemId == null) return;
-    // Marking hides the file when "hide reviewed" is on; pre-advance the cursor.
+    if (itemId == null || toggleReviewed(itemId) !== true) return;
+    const idx = visibleFiles.findIndex((f) => f.name === current);
+    const next = visibleFiles[idx + 1] ?? visibleFiles[hideReviewed ? idx - 1 : idx];
+    if (next == null) return;
+    currentFileRef.current = next.name;
     if (hideReviewed) {
-      const sig = fileSignatures.get(current);
-      const willHide = sig != null && reviewed.map.get(current) !== sig;
-      if (willHide) {
-        const idx = visibleFiles.findIndex((f) => f.name === current);
-        const next = visibleFiles[idx + 1] ?? visibleFiles[idx - 1];
-        currentFileRef.current = next?.name ?? null;
-      }
+      // Hiding remounts CodeView; the scroll-restore effect does the scroll.
+      pendingScrollFileRef.current = next.name;
+    } else {
+      afterLayout(() => scrollToFile(next.name, "instant"));
     }
-    toggleReviewed(itemId);
-  }, [
-    getCurrentFile,
-    filePathToItemId,
-    toggleReviewed,
-    hideReviewed,
-    fileSignatures,
-    reviewed,
-    visibleFiles,
-  ]);
+  }, [getCurrentFile, filePathToItemId, toggleReviewed, hideReviewed, visibleFiles, scrollToFile]);
+  const toggleCurrentFileCollapsed = useCallback(() => {
+    const current = currentFileRef.current ?? getCurrentFile();
+    if (current == null) return;
+    const itemId = filePathToItemId.get(current);
+    if (itemId == null) return;
+    toggleFileCollapsed(itemId);
+    // Collapsing mid-file would otherwise leave the viewport on a later file.
+    afterLayout(() => scrollToFile(current, "instant"));
+  }, [getCurrentFile, filePathToItemId, toggleFileCollapsed, scrollToFile]);
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // The editor lives in shadow DOM, so the target check below misses it.
@@ -881,6 +909,8 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       return;
     }
     if (commentTarget || shortcutsOpen) return;
+    const scroller = scrollContainerRef.current;
+    const behavior: ScrollBehavior = e.repeat ? "instant" : "smooth";
     switch (e.key) {
       case "n":
         e.preventDefault();
@@ -890,9 +920,44 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
         e.preventDefault();
         navigateFile(-1);
         break;
-      case "m":
+      case "r":
+      case "m": // Legacy alias, intentionally left out of ShortcutsDialog.
         e.preventDefault();
         reviewCurrentFile();
+        break;
+      case "o":
+        e.preventDefault();
+        toggleCurrentFileCollapsed();
+        break;
+      case "j":
+        e.preventDefault();
+        scroller?.scrollBy({ top: SCROLL_STEP_PX, behavior });
+        break;
+      case "k":
+        e.preventDefault();
+        scroller?.scrollBy({ top: -SCROLL_STEP_PX, behavior });
+        break;
+      // d/u, not Ctrl-d/u: the browser owns those (Vimium does the same).
+      case "d":
+      case "u":
+        e.preventDefault();
+        if (scroller) {
+          const halfPage = scroller.clientHeight / 2;
+          scroller.scrollBy({ top: e.key === "d" ? halfPage : -halfPage, behavior });
+        }
+        break;
+      case "G":
+        e.preventDefault();
+        scroller?.scrollTo({ top: scroller.scrollHeight, behavior });
+        break;
+      case "g":
+        e.preventDefault();
+        if (e.timeStamp - lastGKeyAtRef.current < GG_TIMEOUT_MS) {
+          lastGKeyAtRef.current = 0;
+          scroller?.scrollTo({ top: 0, behavior });
+        } else {
+          lastGKeyAtRef.current = e.timeStamp;
+        }
         break;
     }
   });
@@ -1294,7 +1359,9 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               </button>
             }
           />
-          <TooltipContent>{isCollapsed ? "Expand file" : "Collapse file"}</TooltipContent>
+          <TooltipContent>
+            {isCollapsed ? "Expand file" : "Collapse file"} · shortcut: o
+          </TooltipContent>
         </Tooltip>
       );
     },
@@ -1330,7 +1397,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
       return (
         <div className="flex items-center gap-1" data-diff-file={item.fileDiff.name}>
           <label
-            title="Mark file as reviewed (collapses it) · shortcut: m"
+            title="Mark file as reviewed (collapses it) · shortcut: r"
             className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition-colors ${
               isReviewed
                 ? "text-green-600 dark:text-green-400"
@@ -1537,6 +1604,7 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
               <CodeView<AnnotationMeta>
                 key={codeViewKey}
                 ref={viewerRef}
+                containerRef={scrollContainerRef}
                 initialItems={initialItems}
                 selectedLines={selectedLines}
                 onSelectedLinesChange={setSelectedLines}
