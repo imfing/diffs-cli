@@ -109,6 +109,7 @@ const PROGRAMMATIC_SCROLL_SETTLE_MS = 250;
 const CURRENT_FILE_HEADER_SLOP_PX = 24;
 const SCROLL_STEP_PX = 60;
 const GG_TIMEOUT_MS = 500;
+const SCROLL_RESTORE_TIMEOUT_MS = 3000;
 const EDITABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
@@ -741,18 +742,30 @@ export function DiffView({ source = "pr" }: { source?: "pr" | "local" | "branch"
     const pendingFile = pendingScrollFileRef.current;
     pendingScrollFileRef.current = null;
     const saved = parseInt(sessionStorage.getItem(scrollStorageKey) ?? "", 10);
+    let restoreRafId = 0;
     if (pendingFile != null) {
       afterLayout(() => scrollToPendingFile(pendingFile));
     } else if (saved > 0) {
-      afterLayout(() => {
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = saved;
-      });
+      // CodeView lays out its content some frames after mount; restoring earlier clamps to 0.
+      const deadline = performance.now() + SCROLL_RESTORE_TIMEOUT_MS;
+      const restore = () => {
+        const el = scrollContainerRef.current;
+        if (el?.scrollTop) return; // The user scrolled first.
+        const fits = el != null && el.scrollHeight - el.clientHeight >= saved;
+        if (fits || performance.now() > deadline) {
+          if (el) el.scrollTop = saved;
+        } else {
+          restoreRafId = requestAnimationFrame(restore);
+        }
+      };
+      restoreRafId = requestAnimationFrame(restore);
     }
 
     return () => {
       area.removeEventListener("scroll", handleScroll, { capture: true });
       if (timer) clearTimeout(timer);
       if (rafId) cancelAnimationFrame(rafId);
+      if (restoreRafId) cancelAnimationFrame(restoreRafId);
     };
   }, [scrollStorageKey, codeViewKey, getCurrentFile]);
   const scrollToThread = useCallback(
